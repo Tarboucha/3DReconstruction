@@ -1,0 +1,14 @@
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.plk
+*.log
+*.tmp
+__pycache__/
+*.pyc
+/garbage
+/images
+/output
