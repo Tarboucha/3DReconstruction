@@ -1,0 +1,75 @@
+Feature Matching Pipeline Benchmark Summary
+==================================================
+
+Timestamp: 2025-09-28 12:33:14
+Image Source: folder
+Folder: E:\project\3Dreconstruction\images\statue_of_liberty_images
+Methods: SIFT, ORB, Harris, AKAZE, lightglue
+Benchmark Types: performance, accuracy
+
+Matching Pipeline Performance Results:
+------------------------------
+
+SIFT:
+  Success Rate: 100.0%
+  Avg Pipeline Time: 0.181s
+  Avg Matches: 7.4
+  Avg Features: 747
+  FPS: 5.5
+  Matches/Second: 41.1
+
+ORB:
+  Success Rate: 100.0%
+  Avg Pipeline Time: 0.111s
+  Avg Matches: 1921.3
+  Avg Features: 1925
+  FPS: 9.0
+  Matches/Second: 17303.3
+
+Harris:
+  Success Rate: 100.0%
+  Avg Pipeline Time: 0.053s
+  Avg Matches: 0.3
+  Avg Features: 164
+  FPS: 18.9
+  Matches/Second: 5.4
+
+AKAZE:
+  Success Rate: 100.0%
+  Avg Pipeline Time: 0.112s
+  Avg Matches: 589.5
+  Avg Features: 603
+  FPS: 8.9
+  Matches/Second: 5258.4
+
+lightglue:
+  Success Rate: 100.0%
+  Avg Pipeline Time: 9.333s
+  Avg Matches: 53.5
+  Avg Features: 54
+  FPS: 0.1
+  Matches/Second: 5.7
+
+
+Matching Accuracy Results:
+------------------------------
+
+SIFT:
+  Avg Quality Score: 0.365
+  Avg Matches: 420.0
+
+ORB:
+  Avg Quality Score: 0.342
+  Avg Matches: 993.2
+
+Harris:
+  Avg Quality Score: 0.406
+  Avg Matches: 83.3
+
+AKAZE:
+  Avg Quality Score: 0.258
+  Avg Matches: 580.0
+
+lightglue:
+  Avg Quality Score: 0.456
+  Avg Matches: 569.5

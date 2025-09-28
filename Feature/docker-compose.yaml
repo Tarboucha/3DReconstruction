@@ -1,0 +1,197 @@
+version: '3.8'
+
+services:
+  # Main feature detection service
+  feature-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: feature-detection:simple
+    container_name: ${CONTAINER_PREFIX:-feature-detection}-main
+    volumes:
+      # Mount your images directory (read-only)
+      - "${IMAGES_PATH:-E:/project/3Dreconstruction/images/statue_of_liberty_images}:/app/images:ro"
+      # Mount results directory (read-write)
+      - "${RESULTS_PATH:-E:/project/3Dreconstruction/results}:/app/results"
+      # Optional: Mount source code for development
+      - "${SOURCE_PATH:-.}:/app/src:ro"
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+    working_dir: /app
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-4G}
+          cpus: '${CPU_LIMIT:-2.0}'
+    # Default command - can be overridden
+    command: python -c "from feature_detection_system.benchmark_pipeline import quick_folder_benchmark; quick_folder_benchmark('/app/images', ['SIFT', 'ORB'], max_images=${MAX_IMAGES:-10})"
+
+  # Interactive shell service for development/testing
+  feature-detection-shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: feature-detection:simple
+    container_name: ${CONTAINER_PREFIX:-feature-detection}-shell
+    volumes:
+      - "${IMAGES_PATH:-E:/project/3Dreconstruction/images/statue_of_liberty_images}:/app/images:ro"
+      - "${RESULTS_PATH:-E:/project/3Dreconstruction/results}:/app/results"
+      - "${SOURCE_PATH:-.}:/app/src:ro"
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # Benchmark service - traditional methods only
+  benchmark-traditional:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: feature-detection:simple
+    container_name: ${CONTAINER_PREFIX:-feature-detection}-benchmark-trad
+    volumes:
+      - "${IMAGES_PATH:-E:/project/3Dreconstruction/images/statue_of_liberty_images}:/app/images:ro"
+      - "${RESULTS_PATH:-E:/project/3Dreconstruction/results}:/app/results"
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+    working_dir: /app
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-4G}
+          cpus: '${CPU_LIMIT:-2.0}'
+    command: >
+      python -c "
+      from feature_detection_system.benchmark_pipeline import UnifiedBenchmarkPipeline, UnifiedBenchmarkConfig;
+      config = UnifiedBenchmarkConfig(
+          methods=['SIFT', 'ORB', 'AKAZE', 'BRISK'], 
+          max_images=${MAX_IMAGES:-10}, 
+          save_results=True, 
+          output_dir='/app/results',
+          num_runs=${NUM_RUNS:-3}
+      );
+      pipeline = UnifiedBenchmarkPipeline(config);
+      results = pipeline.benchmark_folder('/app/images');
+      pipeline.print_summary(results)
+      "
+
+  # Benchmark service - with LightGlue (if available)
+  benchmark-deep:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: feature-detection:simple
+    container_name: ${CONTAINER_PREFIX:-feature-detection}-benchmark-deep
+    volumes:
+      - "${IMAGES_PATH:-E:/project/3Dreconstruction/images/statue_of_liberty_images}:/app/images:ro"
+      - "${RESULTS_PATH:-E:/project/3Dreconstruction/results}:/app/results"
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+    working_dir: /app
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-4G}
+          cpus: '${CPU_LIMIT:-2.0}'
+    command: >
+      python -c "
+      from feature_detection_system.benchmark_pipeline import UnifiedBenchmarkPipeline, UnifiedBenchmarkConfig;
+      config = UnifiedBenchmarkConfig(
+          methods=['SIFT', 'ORB', 'lightglue'], 
+          max_images=${MAX_IMAGES:-5}, 
+          save_results=True, 
+          output_dir='/app/results',
+          num_runs=${NUM_RUNS:-3}
+      );
+      pipeline = UnifiedBenchmarkPipeline(config);
+      results = pipeline.benchmark_folder('/app/images');
+      pipeline.print_summary(results)
+      "
+
+  # Comprehensive benchmark service
+  benchmark-comprehensive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: feature-detection:simple
+    container_name: ${CONTAINER_PREFIX:-feature-detection}-benchmark-comp
+    volumes:
+      - "${IMAGES_PATH:-E:/project/3Dreconstruction/images/statue_of_liberty_images}:/app/images:ro"
+      - "${RESULTS_PATH:-E:/project/3Dreconstruction/results}:/app/results"
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+    working_dir: /app
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-4G}
+          cpus: '${CPU_LIMIT:-2.0}'
+    command: >
+      python -c "
+      from feature_detection_system.benchmark_pipeline import UnifiedBenchmarkPipeline, UnifiedBenchmarkConfig, BenchmarkType;
+      config = UnifiedBenchmarkConfig(
+          methods=['SIFT', 'ORB', 'AKAZE'], 
+          benchmark_types=[BenchmarkType.PERFORMANCE, BenchmarkType.ACCURACY],
+          max_images=${MAX_IMAGES:-8}, 
+          save_results=True, 
+          output_dir='/app/results',
+          num_runs=${NUM_RUNS:-3}
+      );
+      pipeline = UnifiedBenchmarkPipeline(config);
+      results = pipeline.benchmark_folder('/app/images');
+      pipeline.print_summary(results)
+      "
+
+  # Single image pair analysis
+  pair-analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: feature-detection:simple
+    container_name: ${CONTAINER_PREFIX:-feature-detection}-pair
+    volumes:
+      - "${IMAGES_PATH:-E:/project/3Dreconstruction/images/statue_of_liberty_images}:/app/images:ro"
+      - "${RESULTS_PATH:-E:/project/3Dreconstruction/results}:/app/results"
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=${OPENCV_LOG_LEVEL:-ERROR}
+    working_dir: /app
+    command: >
+      python -c "
+      import cv2;
+      import glob;
+      from feature_detection_system.pipeline import create_pipeline;
+      images = sorted(glob.glob('/app/images/*.jpg') + glob.glob('/app/images/*.png'))[:2];
+      if len(images) >= 2:
+          img1 = cv2.imread(images[0]);
+          img2 = cv2.imread(images[1]);
+          pipeline = create_pipeline('balanced');
+          result = pipeline.process_image_pair(img1, img2, visualize=False);
+          print(f'Found {len(result[\"match_data\"].get_best_matches())} matches between {images[0]} and {images[1]}');
+          print(f'Method used: {result[\"method_used\"]}')
+      else:
+          print('Need at least 2 images for pair analysis')
+      "
+
+# Define networks (optional)
+networks:
+  default:
+    name: feature-detection-network
+
+# Define volumes for persistent data (optional)
+volumes:
+  results-data:
+    driver: local

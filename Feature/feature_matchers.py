@@ -281,8 +281,42 @@ class LightGlueMatcher(BasePairMatcher):
     def _load_model(self):
         """Load LightGlue model and feature extractor"""
         try:
-            from .LightGlue.lightglue import LightGlue, SuperPoint, DISK, ALIKED
+            # Try multiple import paths for LightGlue
+            lightglue_module = None
             
+            # Method 1: Try importing from local LightGlue folder
+            try:
+                from .LightGlue.lightglue import LightGlue, SuperPoint, DISK, ALIKED
+                lightglue_module = "local"
+                print("Using local LightGlue installation")
+            except ImportError:
+                pass
+            
+            # Method 2: Try importing from globally installed lightglue
+            if lightglue_module is None:
+                try:
+                    from lightglue import LightGlue, SuperPoint, DISK, ALIKED
+                    lightglue_module = "global"
+                    print("Using global LightGlue installation")
+                except ImportError:
+                    pass
+            
+            # Method 3: Try alternative global import
+            if lightglue_module is None:
+                try:
+                    from lightglue.lightglue import LightGlue
+                    from lightglue.superpoint import SuperPoint
+                    from lightglue.disk import DISK
+                    from lightglue.aliked import ALIKED
+                    lightglue_module = "alternative"
+                    print("Using alternative LightGlue import")
+                except ImportError:
+                    pass
+            
+            if lightglue_module is None:
+                raise ImportError("Could not import LightGlue from any location")
+            
+            # Initialize models based on features type
             if self.features.lower() == 'superpoint':
                 self.extractor = SuperPoint(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
                 self.matcher = LightGlue(features='superpoint', filter_threshold=self.filter_threshold).eval().to(self.device)
@@ -297,18 +331,21 @@ class LightGlueMatcher(BasePairMatcher):
                 self.extractor = SuperPoint(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
                 self.matcher = LightGlue(features='superpoint', filter_threshold=self.filter_threshold).eval().to(self.device)
             
-            print(f"LightGlue matcher with {self.features} loaded successfully")
+            print(f"LightGlue matcher with {self.features} loaded successfully ({lightglue_module})")
             
         except ImportError as e:
-            print(f"LightGlue not available. Install with: pip install lightglue")
-            print(f"Error: {e}")
+            print(f"LightGlue not available. Error: {e}")
+            print("To install LightGlue:")
+            print("  pip install lightglue")
+            print("  OR: pip install git+https://github.com/cvg/LightGlue.git")
             self.matcher = None
             self.extractor = None
         except Exception as e:
             print(f"Failed to load LightGlue: {e}")
             self.matcher = None
             self.extractor = None
-    
+
+            
     def _image_to_tensor(self, image: np.ndarray) -> torch.Tensor:
         """Convert image to tensor format expected by LightGlue"""
         if len(image.shape) == 3:

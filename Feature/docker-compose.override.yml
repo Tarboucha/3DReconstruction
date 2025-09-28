@@ -1,0 +1,89 @@
+# docker-compose.override.yml
+# This file allows you to customize settings without modifying the main docker-compose.yml
+# Docker Compose automatically uses this file if present
+
+version: '3.8'
+
+services:
+  # Override settings for development
+  feature-detection:
+    # Enable GPU support if available (uncomment if you have NVIDIA GPU)
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    
+    # Custom image paths (modify these to match your setup)
+    volumes:
+      # Windows paths (current setup)
+      - "E:/project/3Dreconstruction/images/statue_of_liberty_images:/app/images:ro"
+      - "E:/project/3Dreconstruction/results:/app/results"
+      
+      # Alternative Linux/Mac paths (uncomment and modify as needed)
+      # - "/path/to/your/images:/app/images:ro"
+      # - "/path/to/your/results:/app/results"
+      
+      # Development: mount source code for live editing
+      - ".:/app/src:ro"
+    
+    # Custom environment variables
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system:/app/src
+      - QT_QPA_PLATFORM=offscreen
+      - OPENCV_LOG_LEVEL=ERROR
+      - CUDA_VISIBLE_DEVICES=0  # Use first GPU if available
+      
+    # Memory limits (adjust based on your system)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # Development service with more resources
+  feature-detection-dev:
+    extends:
+      service: feature-detection
+    container_name: feature-detection-dev
+    # Enable development mode
+    environment:
+      - PYTHONPATH=/app:/app/feature_detection_system:/app/src
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - DEBUG=1
+    # Keep container running for development
+    command: tail -f /dev/null
+    stdin_open: true
+    tty: true
+
+  # High-performance benchmarking service
+  benchmark-hpc:
+    extends:
+      service: benchmark-comprehensive
+    container_name: feature-detection-hpc
+    # Use more resources for intensive benchmarking
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4.0'
+        reservations:
+          memory: 4G
+          cpus: '2.0'
+    # Custom command for high-performance benchmarking
+    command: >
+      python -c "
+      from feature_detection_system.benchmark_pipeline import UnifiedBenchmarkPipeline, UnifiedBenchmarkConfig, BenchmarkType;
+      config = UnifiedBenchmarkConfig(
+          methods=['SIFT', 'ORB', 'AKAZE', 'BRISK'], 
+          benchmark_types=[BenchmarkType.PERFORMANCE, BenchmarkType.ACCURACY],
+          max_images=50, 
+          save_results=True, 
+          output_dir='/app/results',
+          num_runs=5,
+          memory_profiling=True
+      );
+      pipeline = UnifiedBenchmarkPipeline(config);
+      results = pipeline.benchmark_folder('/app/images');
+      pipeline.print_summary(results)
+      "

@@ -433,8 +433,8 @@ def main():
     # args = parser.parse_args()
 
     #Alternative: hardcoded values for testing
-    methods = ['SuperPoint', 'DISK', 'ALIKED', 'lightglue']
-    folder = 'E://project//3Dreconstruction//images//Eiffel Tower copy'
+    methods = ['SIFT', 'ORB', 'Harris', 'AKAZE', 'lightglue']
+    folder = 'E://project//3Dreconstruction//images//statue_of_liberty_images'
     max_images = 50
     num_runs = 3
     no_plot = False
