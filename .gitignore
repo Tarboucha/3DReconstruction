@@ -12,3 +12,5 @@ __pycache__/
 /garbage
 /images
 /output
+FeatureMatchingExtraction/__pycache__/
+results/
