@@ -35,9 +35,7 @@ def process_folder_with_orb_lightglue(folder_path: str,
     # Create pipeline with custom configuration
     pipeline = create_pipeline(
         preset='fast',  # Base preset (we'll override methods)
-        methods=['ORB','SIFT','DISK', 'lightglue'],  # Use both ORB and LightGlue
-        max_features=2000,
-        combine_strategy='merge',  # Use best performing method for each pair
+        methods=['lightglue'], 
         detector_params={
             'ORB': {
                 'scale_factor': 1.2,

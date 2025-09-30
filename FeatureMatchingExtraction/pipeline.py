@@ -342,7 +342,7 @@ class FeatureProcessingPipeline:
             print(f"Filtered to {len(final_matches)} good matches")
             match_data = filtered_data
         
-        if visualize and len(match_data.get_best_matches()) > 0:
+        if visualize and len(match_data.get_best_matches()) > 0:  # ✅ Already correct
             visualize_matches_with_scores(
                 img1, img2, features1.keypoints, features2.keypoints,
                 match_data, f"{features1.method} Matches"
@@ -354,10 +354,11 @@ class FeatureProcessingPipeline:
             'match_data': match_data,
             'correspondences': extract_correspondences(
                 features1.keypoints, features2.keypoints,
-                match_data.get_best_matches()
+                match_data.get_best_matches()  # ✅ Already correct
             ),
             'method_used': features1.method
         }
+
 
     def _process_with_lightglue(self, img1: np.ndarray, img2: np.ndarray,
                                visualize: bool, filter_matches: bool) -> Dict:
@@ -383,8 +384,8 @@ class FeatureProcessingPipeline:
                 
                 print(f"Filtered to {len(final_matches)} good matches")
                 match_data = filtered_data
-            
-            if visualize and len(match_data.get_best_matches()) > 0:
+                
+            if visualize and len(match_data.get_best_matches()) > 0:  # ✅ Already correct
                 visualize_matches_with_scores(
                     img1, img2, features1.keypoints, features2.keypoints,
                     match_data, "LightGlue Matches"
@@ -396,7 +397,7 @@ class FeatureProcessingPipeline:
                 'match_data': match_data,
                 'correspondences': extract_correspondences(
                     features1.keypoints, features2.keypoints,
-                    match_data.get_best_matches()
+                    match_data.get_best_matches()  # ✅ Already correct
                 ),
                 'method_used': 'LightGlue'
             }
@@ -507,10 +508,10 @@ class FeatureProcessingPipeline:
         CORRECTED: Each method maintains its own MatchData with correct score_type
         """
         print("Processing multiple methods independently...")
-        
+            
         all_features1 = []
         all_features2 = []
-        multi_match_data = MultiMethodMatchData()  # ✓ NEW container
+        multi_match_data = MultiMethodMatchData()  # ✅ Wrapper for multiple MatchData
         methods_used = []
         total_time = 0
         
@@ -636,27 +637,35 @@ class FeatureProcessingPipeline:
         
         # Apply filtering if requested
         if filter_matches and len(multi_match_data) >= 4:
-            print("\nApplying filtering to merged matches...")
+            print("\nApplying filtering to multi-method matches...")
+            print(f"Score types by method: {multi_match_data.get_score_types_by_method()}")
             
-            all_matches = multi_match_data.get_all_matches()
+            # ✅ Adaptive filtering respects each method's score_type
+            filtered_multi = adaptive_match_filtering(multi_match_data, top_k=500)
             
-            # ✓ Adaptive filtering that respects per-match score types
-            filtered_matches = self._adaptive_multi_method_filtering(all_matches, top_k=500)
+            # Get all filtered matches for homography estimation
+            all_filtered_matches = filtered_multi.get_all_matches()
             
-            # Geometric filtering with homography RANSAC
+            # ✅ Geometric filtering with homography RANSAC
             final_matches, homography = enhanced_filter_matches_with_homography(
                 combined_kp1, combined_kp2,
-                filtered_matches, multi_match_data  # Pass the container
+                all_filtered_matches,
+                filtered_multi  # ✅ Pass the filtered MultiMethodMatchData
             )
             
-            # Store filtering results
+            # Update the multi_match_data with filtering results
+            multi_match_data = filtered_multi
             multi_match_data.homography = homography
+            
+            # Find indices of final matches in all matches
+            all_matches = multi_match_data.get_all_matches()
             multi_match_data.filtered_match_indices = [
                 i for i, m in enumerate(all_matches) if m in final_matches
             ]
             
-            print(f"Filtered to {len(final_matches)} good matches")
-        
+            print(f"Final filtered matches: {len(final_matches)}")
+            print(f"By method: {multi_match_data.get_match_count_by_method()}")
+
         # Create FeatureData objects
         merged_features1 = FeatureData(
             keypoints=combined_kp1,
@@ -674,25 +683,25 @@ class FeatureProcessingPipeline:
             raw_image=img2
         )
         
-        # Visualization
-        if visualize and len(multi_match_data.get_filtered_matches()) > 0:
+        if visualize and len(multi_match_data.get_best_matches()) > 0: 
             visualize_matches_with_scores(
                 img1, img2, combined_kp1, combined_kp2,
-                multi_match_data, f"Merged: {', '.join(methods_used)}"
+                multi_match_data,
+                f"Merged: {', '.join(methods_used)}"
             )
         
         return {
             'features1': merged_features1,
             'features2': merged_features2,
-            'match_data': multi_match_data,  # ✓ Now properly structured
+            'match_data': multi_match_data,
             'correspondences': extract_correspondences(
                 combined_kp1, combined_kp2,
-                multi_match_data.get_filtered_matches()
+                multi_match_data.get_best_matches()  
             ),
-            'method_used': f"Merged({','.join(methods_used)})",
-            'methods_breakdown': multi_match_data.get_stats()
+            'method_used': f"Multi-Method({','.join(methods_used)})",
+            'methods_breakdown': multi_match_data.get_stats(),
+            'is_multi_method': True
         }
-
 
     def _adaptive_multi_method_filtering(self, matches: List[EnhancedDMatch], 
                                         top_k: int = 500) -> List[EnhancedDMatch]:
@@ -993,7 +1002,7 @@ class FeatureProcessingPipeline:
                 'original_path': image_path,
                 'filename': filename,
                 'transformation': 'rotation_15deg_scale_0.9',
-                'image_size': (w, h)
+                'image_size': (width, height)
             }
             
         else:
@@ -1010,7 +1019,7 @@ class FeatureProcessingPipeline:
                 'image_info': {
                     'original_path': image_path,
                     'filename': filename,
-                    'image_size': (w, h)
+                    'image_size': (width, height)
                 },
                 'method_used': features.method
             }
@@ -1241,19 +1250,46 @@ class FeatureProcessingPipeline:
             try:
                 result = self.process_image_pair(img1, img2, visualize=False)
                 
+                # ✅ FIXED: Use safe accessor for both MatchData and MultiMethodMatchData
+                from .utils import get_match_count_safely
+                
                 # Store essential information
                 pair_result = {
                     'correspondences': result['correspondences'].tolist() if isinstance(result['correspondences'], np.ndarray) else result['correspondences'],
-                    'num_matches': len(result['match_data'].get_best_matches()),
+                    'num_matches': get_match_count_safely(result['match_data'], filtered=True),  # ✅ Safe access
                     'method': result['method_used'],
-                    'score_type': result['match_data'].score_type.value,
-                    'quality_score': self.analyzer.analyze_match_data(result['match_data'])['quality_score'],
-                    'homography': result['match_data'].homography.tolist()
-                                if result['match_data'].homography is not None else None,
+                    'homography': None,  # Will be set below if available
                     'processing_time': result.get('processing_time', 0),
                     'pair_index': i + 1,
                     'session_pair_index': pairs_processed_in_session
                 }
+                
+                # ✅ Handle both MatchData and MultiMethodMatchData for additional fields
+                match_data = result['match_data']
+                
+                if isinstance(match_data, MultiMethodMatchData):
+                    # Multi-method specific fields
+                    pair_result['is_multi_method'] = True
+                    pair_result['methods_breakdown'] = match_data.get_stats()
+                    pair_result['match_counts_by_method'] = match_data.get_match_count_by_method()
+                    pair_result['score_types_by_method'] = {k: v.value for k, v in match_data.get_score_types_by_method().items()}
+                    
+                    # Quality score (use analyzer)
+                    quality_analysis = self.analyzer.analyze_match_data(match_data)
+                    pair_result['quality_score'] = quality_analysis.get('quality_score', 0.0)
+                    
+                    # Homography
+                    if match_data.homography is not None:
+                        pair_result['homography'] = match_data.homography.tolist()
+                        
+                else:
+                    # Single-method MatchData
+                    pair_result['is_multi_method'] = False
+                    pair_result['score_type'] = match_data.score_type.value
+                    pair_result['quality_score'] = self.analyzer.analyze_match_data(match_data)['quality_score']
+                    
+                    if match_data.homography is not None:
+                        pair_result['homography'] = match_data.homography.tolist()
                 
                 current_batch_results[pair_key] = pair_result
                 current_batch_stats['successful_pairs'] += 1
@@ -1263,16 +1299,17 @@ class FeatureProcessingPipeline:
                 
                 print(f"  Success: {pair_result['num_matches']} matches "
                     f"(quality: {pair_result['quality_score']:.3f})")
-                
+            
             except Exception as e:
+                import traceback
                 print(f"  Failed: {str(e)}")
+                traceback.print_exc()
                 current_batch_results[pair_key] = {
                     'error': str(e),
                     'num_matches': 0,
                     'pair_index': i + 1,
                     'session_pair_index': pairs_processed_in_session
                 }
-            
             # Save batch if we've reached the batch size
             if len(current_batch_results) >= batch_size:
                 save_current_batch(current_batch)

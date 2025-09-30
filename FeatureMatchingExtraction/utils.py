@@ -380,8 +380,6 @@ def load_images_from_folder(folder_path: str,
     source = FolderImageSource(folder_path, max_images, resize_to, extensions)
     return [(img_info.image, img_info.identifier) for img_info in source.get_images()]
 
-
-
 def load_single_image(image_path: str, 
                      resize_to: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, str]:
     """
@@ -397,7 +395,6 @@ def load_single_image(image_path: str,
     source = SingleImageSource(image_path, resize_to)
     img_info = next(source.get_images())
     return img_info.image, img_info.identifier
-
 
 def get_images_from_folder(folder_path: str, extensions: List[str] = None) -> List[str]:
     """
@@ -431,25 +428,31 @@ def get_images_from_folder(folder_path: str, extensions: List[str] = None) -> Li
     
     return image_paths
 
-
 # =============================================================================
 # Filtering Functions
 # =============================================================================
 def enhanced_filter_matches_with_homography(
     kp1: List[cv2.KeyPoint], 
     kp2: List[cv2.KeyPoint],
-    matches: Union[List[Union[cv2.DMatch, EnhancedDMatch]], MultiMethodMatchData],  # ✓ Accept new type
-    match_data: Union[MatchData, MultiMethodMatchData],  # ✓ Accept new type
+    matches: Union[List[Union[cv2.DMatch, EnhancedDMatch]], MultiMethodMatchData],
+    match_data: Union[MatchData, MultiMethodMatchData],
     ransac_threshold: float = 5.0,
     confidence: float = 0.99,
     max_iters: int = 2000
 ) -> Tuple[List[Union[cv2.DMatch, EnhancedDMatch]], np.ndarray]:
-    """Enhanced filter matches using RANSAC homography with score awareness"""
+    """
+    Enhanced filter matches using RANSAC homography with score awareness
     
-    # Handle MultiMethodMatchData
+    Handles both single-method (MatchData) and multi-method (MultiMethodMatchData) cases.
+    For multi-method, each match retains its original score_type from its source method.
+    """
+    
+    # ✅ Handle MultiMethodMatchData - extract matches list
+    is_multi_method = isinstance(match_data, MultiMethodMatchData)
+    
     if isinstance(matches, MultiMethodMatchData):
-        matches = matches.get_all_matches()  # Get actual match list
-    elif isinstance(match_data, MultiMethodMatchData):
+        matches = matches.get_all_matches()
+    elif is_multi_method:
         matches = match_data.get_all_matches()
     
     if len(matches) < 4:
@@ -463,43 +466,29 @@ def enhanced_filter_matches_with_homography(
     invalid_count = 0
     
     for m in matches:
-        # Check if indices are within bounds
         if m.queryIdx <= max_idx1 and m.trainIdx <= max_idx2 and m.queryIdx >= 0 and m.trainIdx >= 0:
             valid_matches.append(m)
         else:
             invalid_count += 1
-            if invalid_count <= 5:  # Only print first 5 to avoid spam
+            if invalid_count <= 5:
                 print(f"Warning: Invalid match - queryIdx={m.queryIdx} (max={max_idx1}), "
                       f"trainIdx={m.trainIdx} (max={max_idx2})")
     
     if invalid_count > 0:
         print(f"Total invalid matches filtered: {invalid_count}/{len(matches)}")
     
-    # Check if we have enough valid matches
     if len(valid_matches) < 4:
         print(f"Error: Only {len(valid_matches)} valid matches after filtering (need 4+ for homography)")
-        print(f"  Keypoints: kp1={len(kp1)}, kp2={len(kp2)}")
-        print(f"  Original matches: {len(matches)}")
         return valid_matches if valid_matches else matches[:min(len(matches), 4)], None
     
-    # Use only valid matches from here on
     matches = valid_matches
     
-    # Convert matches to points - now guaranteed to be safe
+    # Convert matches to points
     try:
         src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-    except IndexError as e:
-        # This should never happen after validation, but handle it anyway
-        print(f"CRITICAL: Index error after validation: {e}")
-        print(f"  kp1 length: {len(kp1)}, kp2 length: {len(kp2)}")
-        print(f"  Match count: {len(matches)}")
-        if matches:
-            print(f"  queryIdx range: [{min(m.queryIdx for m in matches)}, {max(m.queryIdx for m in matches)}]")
-            print(f"  trainIdx range: [{min(m.trainIdx for m in matches)}, {max(m.trainIdx for m in matches)}]")
-        return matches, None
-    except Exception as e:
-        print(f"Unexpected error extracting points: {e}")
+    except (IndexError, AttributeError) as e:
+        print(f"Error extracting points: {e}")
         return matches, None
     
     # Find homography with RANSAC
@@ -522,28 +511,128 @@ def enhanced_filter_matches_with_homography(
             if mask[i]:
                 filtered_matches.append(match)
     else:
-        # No mask returned - homography estimation failed
         print("Warning: Homography estimation failed, returning unfiltered matches")
         return matches, homography
     
-    # Sort filtered matches by quality score
-    if filtered_matches and match_data.score_type == ScoreType.CONFIDENCE:
-        # Higher confidence is better
-        filtered_matches.sort(
-            key=lambda x: x.score if isinstance(x, EnhancedDMatch) else 1.0 - x.distance, 
-            reverse=True
-        )
-    elif filtered_matches:
-        # Lower distance is better
-        filtered_matches.sort(
-            key=lambda x: x.score if isinstance(x, EnhancedDMatch) else x.distance
-        )
+    # ✅ Sort filtered matches respecting their individual score types
+    if is_multi_method:
+        # Multi-method case: each match has its own score_type
+        print(f"Multi-method filtering - score types: {match_data.get_score_types_by_method()}")
+        
+        # Sort by normalized quality score across different score types
+        def get_normalized_quality(match):
+            """Get normalized quality score (0-1, higher is better)"""
+            if isinstance(match, EnhancedDMatch):
+                if match.score_type == ScoreType.CONFIDENCE:
+                    return match.score  # Already 0-1, higher is better
+                else:  # DISTANCE
+                    # Lower distance is better, normalize to 0-1 range
+                    # Assume max reasonable distance is 1.0 (for normalized descriptors)
+                    return max(0.0, 1.0 - min(match.score, 1.0))
+            else:
+                # cv2.DMatch - assume distance
+                return max(0.0, 1.0 - min(match.distance, 1.0))
+        
+        filtered_matches.sort(key=get_normalized_quality, reverse=True)
+        
+    else:
+        # Single-method case: use the single score_type
+        if filtered_matches and match_data.score_type == ScoreType.CONFIDENCE:
+            # Higher confidence is better
+            filtered_matches.sort(
+                key=lambda x: x.score if isinstance(x, EnhancedDMatch) else 1.0 - x.distance, 
+                reverse=True
+            )
+        elif filtered_matches:
+            # Lower distance is better
+            filtered_matches.sort(
+                key=lambda x: x.score if isinstance(x, EnhancedDMatch) else x.distance
+            )
     
     inlier_ratio = len(filtered_matches) / len(matches) if matches else 0
-    print(f"Homography filtering: {len(matches)} → {len(filtered_matches)} matches (inlier ratio: {inlier_ratio:.2%})")
+    
+    if is_multi_method:
+        # Show breakdown by method
+        method_counts = {}
+        for match in filtered_matches:
+            if isinstance(match, EnhancedDMatch) and hasattr(match, 'source_method'):
+                method = match.source_method
+                method_counts[method] = method_counts.get(method, 0) + 1
+        print(f"Homography filtering: {len(matches)} → {len(filtered_matches)} matches")
+        print(f"  Inlier ratio: {inlier_ratio:.2%}")
+        print(f"  By method: {method_counts}")
+    else:
+        print(f"Homography filtering: {len(matches)} → {len(filtered_matches)} matches (inlier ratio: {inlier_ratio:.2%})")
     
     return filtered_matches, homography
 
+def adaptive_match_filtering(
+    match_data: Union[MatchData, MultiMethodMatchData],
+    adaptive_threshold: bool = True,
+    top_k: Optional[int] = None,
+    percentile_threshold: float = 75.0
+) -> Union[MatchData, MultiMethodMatchData]:
+    """
+    Adaptive filtering based on score type and distribution
+    
+    For MultiMethodMatchData: Filters each method independently, respecting its score_type
+    """
+    
+    # ✅ Handle MultiMethodMatchData - filter each method independently
+    if isinstance(match_data, MultiMethodMatchData):
+        print(f"Adaptive filtering for multi-method data ({match_data.get_methods()})")
+        
+        filtered_multi = MultiMethodMatchData()
+        filtered_multi.all_keypoints1 = match_data.all_keypoints1
+        filtered_multi.all_keypoints2 = match_data.all_keypoints2
+        
+        for method in match_data.get_methods():
+            method_match_data = match_data.per_method_matches[method]
+            offset1, offset2 = match_data.method_offsets[method]
+            
+            # Filter this method's matches independently
+            if len(method_match_data.matches) > 0:
+                scores = method_match_data.get_match_scores(use_filtered=False)
+                
+                if adaptive_threshold and len(scores) > 5:
+                    # Adaptive threshold based on score distribution
+                    if method_match_data.score_type == ScoreType.CONFIDENCE:
+                        # For confidence: keep top percentile
+                        threshold = np.percentile(scores, 100 - percentile_threshold)
+                    else:
+                        # For distance: keep bottom percentile
+                        threshold = np.percentile(scores, percentile_threshold)
+                else:
+                    # Fixed threshold
+                    threshold = 0.2 if method_match_data.score_type == ScoreType.CONFIDENCE else 0.8
+                
+                print(f"  {method}: {len(scores)} matches, threshold={threshold:.3f} ({method_match_data.score_type.value})")
+                
+                # Apply filtering
+                filtered = method_match_data.filter_by_score(threshold, top_k)
+                
+                if len(filtered.filtered_matches or filtered.matches) > 0:
+                    filtered_multi.add_method_matches(method, filtered, offset1, offset2)
+                    print(f"    Kept {len(filtered.filtered_matches or filtered.matches)} matches")
+        
+        return filtered_multi
+    
+    # ✅ Original MatchData handling (unchanged)
+    if not match_data.matches:
+        return match_data
+    
+    scores = match_data.get_match_scores(use_filtered=False)
+    
+    if adaptive_threshold and len(scores) > 5:
+        if match_data.score_type == ScoreType.CONFIDENCE:
+            threshold = np.percentile(scores, 100 - percentile_threshold)
+        else:
+            threshold = np.percentile(scores, percentile_threshold)
+    else:
+        threshold = 0.2 if match_data.score_type == ScoreType.CONFIDENCE else 0.8
+    
+    filtered_data = match_data.filter_by_score(threshold, top_k)
+    return filtered_data
 
 def adaptive_match_filtering(
     match_data: Union[MatchData, MultiMethodMatchData],  # ✓ Accept new type
@@ -598,8 +687,6 @@ def adaptive_match_filtering(
     filtered_data = match_data.filter_by_score(threshold, top_k)
     return filtered_data
 
-
-
 def remove_duplicate_matches(
     matches: List[Union[cv2.DMatch, EnhancedDMatch]],
     distance_threshold: float = 1.0
@@ -632,7 +719,6 @@ def remove_duplicate_matches(
             used_train_idx.add(train_idx)
     
     return unique_matches
-
 
 # =============================================================================
 # Correspondence Extraction
@@ -679,16 +765,49 @@ def extract_correspondences(
 # =============================================================================
 # Visualization Functions
 # =============================================================================
-
 def visualize_matches_with_scores(
     img1: np.ndarray, img2: np.ndarray,
     kp1: List[cv2.KeyPoint], kp2: List[cv2.KeyPoint],
-    match_data: MatchData, title: str = "Matches",
+    match_data: Union[MatchData, MultiMethodMatchData],
+    title: str = "Matches",
     max_matches: int = 50, show_histogram: bool = True,
     figsize: Tuple[int, int] = (15, 8)
 ):
-    """Enhanced visualization showing score information"""
-    matches = match_data.get_best_matches()[:max_matches]
+    """
+    Enhanced visualization showing score information
+    
+    For MultiMethodMatchData: Shows combined visualization with per-method breakdown
+    """
+    
+    # ✅ Handle MultiMethodMatchData
+    if isinstance(match_data, MultiMethodMatchData):
+        matches = match_data.get_filtered_matches()[:max_matches]
+        
+        # Collect scores per method for histogram
+        scores_by_method = {}
+        for method in match_data.get_methods():
+            method_data = match_data.per_method_matches[method]
+            scores_by_method[method] = {
+                'scores': method_data.get_match_scores(),
+                'score_type': method_data.score_type
+            }
+        
+        # For title, show overall info
+        total_matches = len(match_data.get_filtered_matches())
+        method_counts = match_data.get_match_count_by_method()
+        method_info = ', '.join([f"{m}:{c}" for m, c in method_counts.items()])
+        
+    else:
+        # Single-method MatchData
+        matches = match_data.get_best_matches()[:max_matches]
+        scores_by_method = {
+            match_data.method: {
+                'scores': match_data.get_match_scores(),
+                'score_type': match_data.score_type
+            }
+        }
+        total_matches = len(match_data.get_best_matches())
+        method_info = match_data.method
     
     if not matches:
         print("No matches to visualize")
@@ -711,31 +830,37 @@ def visualize_matches_with_scores(
     plt.figure(figsize=figsize)
     plt.imshow(img_matches)
     
-    # Create title with score information
-    scores = match_data.get_match_scores()
-    if len(scores) > 0:
-        score_info = f"({match_data.score_type.value}: {np.mean(scores):.3f}±{np.std(scores):.3f})"
-        full_title = f"{title} - {len(matches)} matches {score_info}"
-    else:
-        full_title = f"{title} - {len(matches)} matches"
-    
-    plt.title(full_title)
+    # Create title
+    full_title = f"{title} - {total_matches} total matches\n[{method_info}]"
+    plt.title(full_title, fontsize=10)
     plt.axis('off')
     
-    # Add score histogram as inset
-    if show_histogram and len(scores) > 5:
+    # Add histogram showing per-method score distributions
+    if show_histogram and len(scores_by_method) > 0:
         try:
             from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+            
+            # Create histogram for each method
             axins = inset_axes(plt.gca(), width="30%", height="20%", loc='upper right')
-            axins.hist(scores, bins=min(20, len(scores)//2), alpha=0.7)
-            axins.set_title(f'{match_data.score_type.value} distribution', fontsize=8)
+            
+            for method, data in scores_by_method.items():
+                scores = data['scores']
+                score_type = data['score_type']
+                
+                if len(scores) > 5:
+                    axins.hist(scores, bins=min(20, len(scores)//2), 
+                             alpha=0.5, label=f"{method} ({score_type.value})")
+            
+            axins.set_title('Score distributions', fontsize=8)
             axins.tick_params(labelsize=6)
+            if len(scores_by_method) > 1:
+                axins.legend(fontsize=6)
+                
         except ImportError:
             print("matplotlib.axes_grid1 not available for histogram inset")
     
     plt.tight_layout()
     plt.show()
-
 
 def visualize_keypoints(
     image: np.ndarray, 
@@ -772,7 +897,6 @@ def visualize_keypoints(
     plt.tight_layout()
     plt.show()
 
-
 # =============================================================================
 # Analysis Functions
 # =============================================================================
@@ -782,22 +906,26 @@ class MatchQualityAnalyzer:
     
     @staticmethod
     def analyze_match_data(match_data: Union[MatchData, MultiMethodMatchData]) -> Dict[str, Any]:
-        """Analyze match data and return quality metrics"""
+        """
+        Analyze match data and return quality metrics
         
-        # Handle MultiMethodMatchData
+        For MultiMethodMatchData: Returns aggregated metrics plus per-method breakdown
+        """
+        
+        # ✅ Handle MultiMethodMatchData as wrapper of multiple MatchData
         if isinstance(match_data, MultiMethodMatchData):
-            # Return aggregated analysis across all methods
             all_matches = match_data.get_filtered_matches()
             
             if len(all_matches) == 0:
                 return {
                     'num_matches': 0,
                     'quality_score': 0.0,
-                    'method': 'Multi-Method',
+                    'match_type': 'multi-method',
+                    'methods': match_data.get_methods(),
                     'per_method': {}
                 }
             
-            # Analyze each method separately
+            # Analyze each method independently
             per_method_analysis = {}
             for method in match_data.get_methods():
                 method_data = match_data.per_method_matches[method]
@@ -813,15 +941,21 @@ class MatchQualityAnalyzer:
             else:
                 weighted_quality = 0.0
             
+            # Show match count by method
+            match_counts = match_data.get_match_count_by_method()
+            
             return {
                 'num_matches': len(all_matches),
                 'quality_score': weighted_quality,
-                'method': 'Multi-Method',
-                'per_method': per_method_analysis,
-                'methods': match_data.get_methods()
+                'match_type': 'multi-method',
+                'methods': match_data.get_methods(),
+                'match_counts_by_method': match_counts,
+                'score_types_by_method': {k: v.value for k, v in match_data.get_score_types_by_method().items()},
+                'has_mixed_score_types': match_data.has_mixed_score_types(),
+                'per_method': per_method_analysis
             }
         
-        # Original MatchData handling
+        # ✅ Single-method MatchData handling (unchanged)
         scores = match_data.get_match_scores()
         
         if len(scores) == 0:
@@ -829,6 +963,7 @@ class MatchQualityAnalyzer:
                 'num_matches': 0,
                 'score_type': match_data.score_type.value,
                 'quality_score': 0.0,
+                'match_type': 'single-method',
                 'method': match_data.method
             }
         
@@ -840,6 +975,7 @@ class MatchQualityAnalyzer:
             'min_score': float(np.min(scores)),
             'max_score': float(np.max(scores)),
             'median_score': float(np.median(scores)),
+            'match_type': 'single-method',
             'method': match_data.method
         }
         
@@ -1447,3 +1583,38 @@ def quick_save_results(results: Any, name: str, output_dir: str = "results") -> 
         export_results_csv(results, output_dir, f"{name}_data_{timestamp}.csv")
     
     return success
+
+
+def get_matches_safely(match_data: Union[MatchData, MultiMethodMatchData], 
+                       filtered: bool = True) -> List[Union[cv2.DMatch, EnhancedDMatch]]:
+    """
+    Safely get matches from either MatchData or MultiMethodMatchData
+    
+    Args:
+        match_data: MatchData or MultiMethodMatchData object
+        filtered: Whether to get filtered/best matches (True) or all matches (False)
+        
+    Returns:
+        List of matches
+    """
+    if isinstance(match_data, MultiMethodMatchData):
+        return match_data.get_best_matches() if filtered else match_data.get_all_matches()
+    elif isinstance(match_data, MatchData):
+        return match_data.get_best_matches() if filtered else match_data.matches
+    else:
+        raise TypeError(f"Expected MatchData or MultiMethodMatchData, got {type(match_data)}")
+
+
+def get_match_count_safely(match_data: Union[MatchData, MultiMethodMatchData], 
+                           filtered: bool = True) -> int:
+    """
+    Safely get match count from either MatchData or MultiMethodMatchData
+    
+    Args:
+        match_data: MatchData or MultiMethodMatchData object
+        filtered: Whether to count filtered/best matches (True) or all matches (False)
+        
+    Returns:
+        Number of matches
+    """
+    return len(get_matches_safely(match_data, filtered))
