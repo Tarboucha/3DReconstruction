@@ -102,14 +102,22 @@ class SyntheticImageGenerator:
         Create realistic test image with controlled features and textures
         
         Args:
-            height: Image height
-            width: Image width
+            height: Image height in pixels (NumPy convention for generation)
+            width: Image width in pixels
             feature_density: 'low', 'medium', 'high'
             texture_complexity: 'low', 'medium', 'high'
             
         Returns:
-            Realistic synthetic test image
+            Realistic synthetic test image with shape (height, width, 3)
+            
+        Note:
+            This function uses (height, width) order internally for NumPy array creation.
+            External APIs should convert from (width, height) before calling.
         """
+        # ✅ Validate inputs
+        if height <= 0 or width <= 0:
+            raise ValueError(f"Image dimensions must be positive, got {width}x{height}")
+        
         # Base image with gradient background
         image = self._create_gradient_background(height, width)
         
@@ -198,6 +206,7 @@ class SyntheticImageGenerator:
             min_size = max(8, int(10 * scale_factor))
             max_size = max(15, int(30 * scale_factor))
             size = np.random.randint(min_size, max_size)
+            
             
             # More varied colors
             base_brightness = np.mean(image[y, x])
@@ -583,40 +592,42 @@ class PerformanceBenchmark:
         self.statistical_analyzer = StatisticalAnalyzer(config.statistical_confidence)
         
     def create_improved_transform_pair(self, base_image: np.ndarray, 
-                                     transformation_type: str = 'perspective') -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                                 transformation_type: str = 'perspective') -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Fixed version of create_transformed_pair with proper transformation matrices
         
         Args:
-            base_image: Base image
+            base_image: Base image with shape (height, width, channels)
             transformation_type: 'perspective', 'affine', 'rotation', 'scale'
             
         Returns:
             Tuple of (img1, img2, ground_truth_transform)
         """
-        h, w = base_image.shape[:2]
+        # ✅ Get dimensions properly
+        height, width = base_image.shape[:2]
         params = self.config.transformation_params
         
         if transformation_type == 'perspective':
             # Perspective transformation with configurable offset
-            src_points = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+            src_points = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
             offset_min, offset_max = params['perspective_offset_range']
-            offset = min(w, h) * np.random.uniform(offset_min, offset_max)
+            offset = min(width, height) * np.random.uniform(offset_min, offset_max)
             
             # More varied perspective distortions
             dst_points = np.float32([
                 [np.random.uniform(0, offset), np.random.uniform(0, offset/2)], 
-                [w - np.random.uniform(0, offset), np.random.uniform(0, offset)], 
-                [w - np.random.uniform(0, offset/2), h - np.random.uniform(0, offset)], 
-                [np.random.uniform(0, offset/2), h - np.random.uniform(0, offset/2)]
+                [width - np.random.uniform(0, offset), np.random.uniform(0, offset)], 
+                [width - np.random.uniform(0, offset/2), height - np.random.uniform(0, offset)], 
+                [np.random.uniform(0, offset/2), height - np.random.uniform(0, offset/2)]
             ])
             
             transform = cv2.getPerspectiveTransform(src_points, dst_points)
-            img2 = cv2.warpPerspective(base_image, transform, (w, h))
+            # ✅ warpPerspective expects (width, height) - correct
+            img2 = cv2.warpPerspective(base_image, transform, (width, height))
             
         elif transformation_type == 'affine':
-            #  affine transformation
-            center = (w/2, h/2)
+            # Affine transformation
+            center = (width/2, height/2)  # ✅ (x, y) = (width/2, height/2)
             angle_min, angle_max = params['affine_angle_range']
             scale_min, scale_max = params['affine_scale_range']
             trans_range = params['affine_translation_range']
@@ -628,43 +639,38 @@ class PerformanceBenchmark:
             transform = cv2.getRotationMatrix2D(center, angle, scale)
             
             # Add translation
-            transform[0, 2] += np.random.uniform(-w*trans_range, w*trans_range)
-            transform[1, 2] += np.random.uniform(-h*trans_range, h*trans_range)
+            transform[0, 2] += np.random.uniform(-width*trans_range, width*trans_range)
+            transform[1, 2] += np.random.uniform(-height*trans_range, height*trans_range)
             
-            img2 = cv2.warpAffine(base_image, transform, (w, h))
-            
-            # Convert to 3x3 matrix for consistency
-            transform_3x3 = np.vstack([transform, [0, 0, 1]])
-            transform = transform_3x3
+            # ✅ warpAffine expects (width, height) - correct
+            img2 = cv2.warpAffine(base_image, transform, (width, height))
+            transform = np.vstack([transform, [0, 0, 1]])
             
         elif transformation_type == 'rotation':
-            # Pure rotation with configurable range
-            center = (w/2, h/2)
+            # Pure rotation
+            center = (width/2, height/2)  # ✅ (x, y)
             angle_min, angle_max = params['rotation_angle_range']
             angle = np.random.uniform(angle_min, angle_max)
             
             transform_2x3 = cv2.getRotationMatrix2D(center, angle, 1.0)
-            img2 = cv2.warpAffine(base_image, transform_2x3, (w, h))
-            
-            # Convert to 3x3 matrix
+            img2 = cv2.warpAffine(base_image, transform_2x3, (width, height))
             transform = np.vstack([transform_2x3, [0, 0, 1]])
             
         elif transformation_type == 'scale':
-            # Fixed scale transformation
+            # Scale transformation
             scale_min, scale_max = params['scale_factor_range']
             scale_factor = np.random.uniform(scale_min, scale_max)
             
-            new_w, new_h = int(w * scale_factor), int(h * scale_factor)
+            new_w, new_h = int(width * scale_factor), int(height * scale_factor)
+            # ✅ resize expects (width, height) - correct
             img2 = cv2.resize(base_image, (new_w, new_h))
             
-            # Proper handling of padding/cropping
             if scale_factor > 1:
                 # Crop to original size
-                start_x = (new_w - w) // 2
-                start_y = (new_h - h) // 2
-                img2 = img2[start_y:start_y+h, start_x:start_x+w]
+                start_x = (new_w - width) // 2
+                start_y = (new_h - height) // 2
+                img2 = img2[start_y:start_y+height, start_x:start_x+width]
                 
-                # Transform matrix represents the crop operation
                 transform = np.array([
                     [scale_factor, 0, -start_x],
                     [0, scale_factor, -start_y],
@@ -672,22 +678,19 @@ class PerformanceBenchmark:
                 ])
             else:
                 # Pad to original size
-                pad_x = (w - new_w) // 2
-                pad_y = (h - new_h) // 2
-                remaining_pad_x = w - new_w - pad_x
-                remaining_pad_y = h - new_h - pad_y
+                pad_x = (width - new_w) // 2
+                pad_y = (height - new_h) // 2
+                remaining_pad_x = width - new_w - pad_x
+                remaining_pad_y = height - new_h - pad_y
                 
                 img2 = cv2.copyMakeBorder(img2, pad_y, remaining_pad_y, 
                                         pad_x, remaining_pad_x, cv2.BORDER_CONSTANT)
                 
-                # Transform matrix represents scale + translation
                 transform = np.array([
                     [scale_factor, 0, pad_x],
                     [0, scale_factor, pad_y],
                     [0, 0, 1]
                 ])
-        else:
-            raise ValueError(f"Unknown transformation type: {transformation_type}")
         
         return base_image, img2, transform
     

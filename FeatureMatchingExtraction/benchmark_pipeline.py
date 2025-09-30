@@ -50,13 +50,15 @@ class UnifiedBenchmarkConfig:
     
     # Image settings
     max_images: Optional[int] = None
-    resize_to: Optional[Tuple[int, int]] = None  # (width, height)
+    resize_to: Optional[Tuple[int, int]] = None  # ✅ (width, height) - API convention
     image_extensions: List[str] = field(default_factory=lambda: ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'])
     
     # Synthetic image settings (for synthetic sources)
-    synthetic_sizes: List[Tuple[int, int]] = field(default_factory=lambda: [(480, 640)])
+    # ✅ CHANGED: Now uses (width, height) for consistency
+    synthetic_sizes: List[Tuple[int, int]] = field(default_factory=lambda: [(640, 480)])  # (width, height)
     synthetic_densities: List[str] = field(default_factory=lambda: ['medium'])
     synthetic_textures: List[str] = field(default_factory=lambda: ['medium'])
+    
     
     # Transformation settings (for accuracy benchmarks)
     transformation_params: Dict = field(default_factory=lambda: {
@@ -91,7 +93,6 @@ class UnifiedBenchmarkConfig:
 
 class SyntheticImageSource(ImageSource):
     """Generate synthetic images on-demand for benchmarking"""
-    
     def __init__(self, config: UnifiedBenchmarkConfig):
         self.config = config
         self.generator = SyntheticImageGenerator()
@@ -106,14 +107,18 @@ class SyntheticImageSource(ImageSource):
                     if count >= max_images:
                         return
                     
-                    height, width = size
-                    image = self.generator.create_realistic_test_image(height, width, density, texture)
+                    # ✅ size is now (width, height), convert to (height, width) for generator
+                    width, height = size
+                    image = self.generator.create_realistic_test_image(
+                        height, width,  # ✅ Generator expects (height, width)
+                        density, texture
+                    )
                     
                     yield ImageInfo(
                         image=image,
                         identifier=f"synthetic_{width}x{height}_{density}_{texture}_{count}",
                         metadata={
-                            'size': (width, height),
+                            'size': (width, height),  # ✅ Store as (width, height)
                             'density': density,
                             'texture': texture,
                             'generated': True
@@ -130,13 +135,17 @@ class SyntheticImageSource(ImageSource):
         for i in range(len(images) - 1):
             yield (images[i], images[i + 1])
         
-        # If only one image, create a transformed version for pairing
+        # If only one image, create a transformed version
         if len(images) == 1:
             img1 = images[0]
-            # Apply small transformation to create second image
-            h, w = img1.image.shape[:2]
-            M = cv2.getRotationMatrix2D((w/2, h/2), 5, 1.0)  # 5 degree rotation
-            img2_array = cv2.warpAffine(img1.image, M, (w, h))
+            
+            # ✅ Get size properly
+            from .utils import image_size_from_shape
+            width, height = image_size_from_shape(img1.image)
+            
+            M = cv2.getRotationMatrix2D((width/2, height/2), 5, 1.0)
+            img2_array = cv2.warpAffine(img1.image, M, (width, height))
+            
             img2 = ImageInfo(
                 image=img2_array,
                 identifier=f"{img1.identifier}_transformed",
@@ -148,12 +157,11 @@ class SyntheticImageSource(ImageSource):
     def get_source_info(self) -> Dict[str, Any]:
         return {
             'type': 'synthetic',
-            'sizes': self.config.synthetic_sizes,
+            'sizes': self.config.synthetic_sizes,  # List of (width, height)
             'densities': self.config.synthetic_densities,
             'textures': self.config.synthetic_textures,
             'total_combinations': len(self.config.synthetic_sizes) * len(self.config.synthetic_densities) * len(self.config.synthetic_textures)
         }
-
 
 # =============================================================================
 # Enhanced Image Sources (Using utils.py classes with config integration)
@@ -762,6 +770,7 @@ class UnifiedBenchmarkPipeline:
             BenchmarkType.PERFORMANCE: PerformanceTask(self.config),
             BenchmarkType.ACCURACY: AccuracyTask(self.config)
         }
+    
     
     def benchmark_synthetic_images(self, methods: List[str] = None, 
                                   benchmark_types: List[BenchmarkType] = None) -> Dict[str, Any]:

@@ -718,8 +718,6 @@ class FeatureProcessingPipeline:
                 # cv2.DMatch - assume distance
                 distance_scores.append(match.distance)
         
-        # Calculate normalization parameters
-        # For distances: use percentile-based normalization to handle outliers
         if distance_scores:
             # Use 95th percentile as max to avoid outlier bias
             distance_max = np.percentile(distance_scores, 95)
@@ -806,18 +804,19 @@ class FeatureProcessingPipeline:
     # =============================================================================
     
     def process_folder(self, folder_path: str,
-                      max_images: Optional[int] = None,
-                      resize_to: Optional[Tuple[int, int]] = None,
-                      visualize: bool = False,
-                      output_file: Optional[str] = None,
-                      save_format: str = 'pickle') -> Dict[str, Any]:
+                    max_images: Optional[int] = None,
+                    resize_to: Optional[Tuple[int, int]] = None,
+                    visualize: bool = False,
+                    output_file: Optional[str] = None,
+                    save_format: str = 'pickle') -> Dict[str, Any]:
         """
         Process all images in a folder for feature detection and matching
         
         Args:
             folder_path: Path to folder containing images
             max_images: Maximum number of images to process
-            resize_to: Resize images to (width, height) if provided
+            resize_to: Resize images to (width, height) - API convention
+                    Example: (1920, 1080) for Full HD, (640, 480) for VGA
             visualize: Whether to show visualizations
             output_file: Optional file to save results
             save_format: Format to save results ('json', 'pickle', 'both')
@@ -827,13 +826,18 @@ class FeatureProcessingPipeline:
         """
         print(f"Processing folder: {folder_path}")
         
+        # ✅ Validate resize_to if provided
+        if resize_to is not None:
+            from .utils import validate_size
+            resize_to = validate_size(resize_to, "resize_to")
+            print(f"Images will be resized to: {resize_to[0]}x{resize_to[1]} (width x height)")
+        
         # Create image source
         image_source = FolderImageSource(
             folder_path=folder_path,
             max_images=max_images,
             resize_to=resize_to
         )
-        
         # Get source information
         source_info = image_source.get_source_info()
         print(f"Found {image_source.get_image_count()} images")
@@ -948,15 +952,15 @@ class FeatureProcessingPipeline:
         return results
     
     def process_single_image_file(self, image_path: str,
-                                 resize_to: Optional[Tuple[int, int]] = None,
-                                 create_transformed_pair: bool = True,
-                                 visualize: bool = True) -> Dict[str, Any]:
+                                resize_to: Optional[Tuple[int, int]] = None,
+                                create_transformed_pair: bool = True,
+                                visualize: bool = True) -> Dict[str, Any]:
         """
         Process a single image file (creates transformed pair for matching)
         
         Args:
             image_path: Path to image file
-            resize_to: Resize image to (width, height) if provided  
+            resize_to: Resize image to (width, height) - API convention
             create_transformed_pair: Whether to create a transformed version for matching
             visualize: Whether to show visualizations
             
@@ -965,14 +969,22 @@ class FeatureProcessingPipeline:
         """
         print(f"Processing single image: {image_path}")
         
+        # ✅ Validate resize_to if provided
+        if resize_to is not None:
+            from .utils import validate_size
+            resize_to = validate_size(resize_to, "resize_to")
+        
         # Load image
         image, filename = load_single_image(image_path, resize_to)
         
         if create_transformed_pair:
-            # Create a simple transformation for demonstration
-            h, w = image.shape[:2]
-            M = cv2.getRotationMatrix2D((w/2, h/2), 15, 0.9)  # 15 degree rotation, slight scale
-            transformed_image = cv2.warpAffine(image, M, (w, h))
+            # ✅ Get size properly
+            from .utils import image_size_from_shape
+            width, height = image_size_from_shape(image)
+            
+            # Create transformation
+            M = cv2.getRotationMatrix2D((width/2, height/2), 15, 0.9)
+            transformed_image = cv2.warpAffine(image, M, (width, height))
             
             print(f"Created transformed pair for matching")
             result = self.process_image_pair(image, transformed_image, visualize=visualize)

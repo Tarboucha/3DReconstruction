@@ -22,9 +22,97 @@ from enum import Enum
 from .core_data_structures import FeatureData, MatchData, EnhancedDMatch, MultiMethodMatchData, ScoreType
 
 
-# =============================================================================
-# Image Source Classes (moved from benchmark_pipeline.py)
-# =============================================================================
+def validate_size(size: Tuple[int, int], name: str = "size") -> Tuple[int, int]:
+    """
+    Validate and return size tuple.
+    
+    Args:
+        size: (width, height) tuple
+        name: Parameter name for error messages
+        
+    Returns:
+        Validated (width, height) tuple
+        
+    Raises:
+        ValueError: If size is invalid
+    """
+    if not isinstance(size, (tuple, list)) or len(size) != 2:
+        raise ValueError(f"{name} must be a tuple of (width, height)")
+    
+    width, height = size
+    
+    if not isinstance(width, int) or not isinstance(height, int):
+        raise ValueError(f"{name} must contain integers, got ({type(width)}, {type(height)})")
+    
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{name} must be positive, got ({width}, {height})")
+    
+    return (width, height)
+
+
+def image_size_from_shape(image: np.ndarray) -> Tuple[int, int]:
+    """
+    Extract (width, height) from image array.
+    
+    Args:
+        image: Image array with shape (height, width) or (height, width, channels)
+        
+    Returns:
+        Tuple of (width, height)
+        
+    Example:
+        >>> img = np.zeros((480, 640, 3))  # shape is (height, width, channels)
+        >>> size = image_size_from_shape(img)
+        >>> print(size)  # (640, 480) - width, height
+    """
+    if image.ndim < 2:
+        raise ValueError(f"Image must have at least 2 dimensions, got {image.ndim}")
+    
+    height, width = image.shape[:2]
+    return (width, height)
+
+
+def resize_image(image: np.ndarray, target_size: Tuple[int, int], 
+                 interpolation: int = cv2.INTER_LINEAR) -> np.ndarray:
+    """
+    Resize image to target size with clear documentation.
+    
+    Args:
+        image: Input image array (height, width) or (height, width, channels)
+        target_size: Target size as (width, height) - API convention
+        interpolation: OpenCV interpolation method
+        
+    Returns:
+        Resized image
+        
+    Note:
+        target_size is (width, height) as per API convention.
+        OpenCV's cv2.resize also expects (width, height).
+    """
+    width, height = validate_size(target_size, "target_size")
+    
+    # cv2.resize expects (width, height) - matches our API convention
+    resized = cv2.resize(image, (width, height), interpolation=interpolation)
+    
+    return resized
+
+
+def print_size_info(image: np.ndarray, label: str = "Image"):
+    """
+    Print size information in both conventions for debugging.
+    
+    Args:
+        image: Image array
+        label: Label for the printout
+    """
+    height, width = image.shape[:2]
+    channels = image.shape[2] if image.ndim > 2 else 1
+    
+    print(f"{label}:")
+    print(f"  Shape (NumPy):     {image.shape} (height, width, channels)")
+    print(f"  Size (API):        ({width}, {height}) (width, height)")
+    print(f"  Resolution:        {width} × {height} pixels")
+    print(f"  Aspect ratio:      {width/height:.2f}:1")
 
 class ImageSourceType(Enum):
     """Types of image sources"""
@@ -85,27 +173,32 @@ class FolderImageSource(ImageSource):
         Args:
             folder_path: Path to folder containing images
             max_images: Maximum number of images to load (None for all)
-            resize_to: Resize images to (width, height) if provided
+            resize_to: Resize images to (width, height) - API convention
+                      Example: (1920, 1080) means width=1920, height=1080
             image_extensions: List of file extensions to search for
         """
         self.folder_path = Path(folder_path)
         self.max_images = max_images
-        self.resize_to = resize_to
+        
+        # ✅ Validate and store resize_to as (width, height)
+        if resize_to is not None:
+            self.resize_to = validate_size(resize_to, "resize_to")
+        else:
+            self.resize_to = None
+            
         self.image_extensions = image_extensions or ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
         
         if not self.folder_path.exists():
             raise ValueError(f"Folder does not exist: {folder_path}")
-        
+    
     def get_images(self) -> Iterator[ImageInfo]:
         """Get images from folder"""
         # Find all image files
         image_files = []
         for ext in self.image_extensions:
-            # Search for both lowercase and uppercase extensions
             image_files.extend(glob.glob(str(self.folder_path / f"*{ext}")))
-            #image_files.extend(glob.glob(str(self.folder_path / f"*{ext.upper()}")))
         
-        image_files = sorted(list(set(image_files)))  # Remove duplicates and sort
+        image_files = sorted(list(set(image_files)))
         
         if self.max_images:
             image_files = image_files[:self.max_images]
@@ -120,20 +213,21 @@ class FolderImageSource(ImageSource):
                 # Convert BGR to RGB for consistency
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 
-                original_size = (image.shape[1], image.shape[0])
+                # ✅ Get original size using helper function
+                original_size = image_size_from_shape(image)  # (width, height)
                 
-                # Resize if requested
+                # ✅ Resize if requested - using helper function
                 if self.resize_to:
-                    image = cv2.resize(image, self.resize_to)
+                    image = resize_image(image, self.resize_to)
                 
                 yield ImageInfo(
                     image=image,
                     identifier=os.path.basename(img_file),
                     metadata={
                         'filepath': img_file,
-                        'original_size': original_size,
+                        'original_size': original_size,  # (width, height)
                         'resized': self.resize_to is not None,
-                        'final_size': (image.shape[1], image.shape[0])
+                        'final_size': image_size_from_shape(image)  # (width, height)
                     },
                     source_type=ImageSourceType.FOLDER
                 )
@@ -141,6 +235,16 @@ class FolderImageSource(ImageSource):
             except Exception as e:
                 print(f"Error loading {img_file}: {e}")
     
+    def get_source_info(self) -> Dict[str, Any]:
+        """Get information about this image source"""
+        return {
+            'type': 'folder',
+            'folder_path': str(self.folder_path),
+            'extensions': self.image_extensions,
+            'resize_to': self.resize_to,  # (width, height) if set
+            'max_images': self.max_images
+        }
+
     def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
         """Generate pairs of images for matching benchmarks"""
         images = list(self.get_images())
@@ -158,16 +262,6 @@ class FolderImageSource(ImageSource):
                 mid = len(images) // 2
                 yield (images[mid], images[mid + 1])
     
-    def get_source_info(self) -> Dict[str, Any]:
-        """Get information about this image source"""
-        return {
-            'type': 'folder',
-            'folder_path': str(self.folder_path),
-            'extensions': self.image_extensions,
-            'resize_to': self.resize_to,
-            'max_images': self.max_images
-        }
-    
     def get_image_count(self) -> int:
         """Get total number of images in folder"""
         return len(list(self.get_images()))
@@ -179,21 +273,26 @@ class FolderImageSource(ImageSource):
 
 class SingleImageSource(ImageSource):
     """Single image source"""
-    
+ 
     def __init__(self, image_path: str, resize_to: Optional[Tuple[int, int]] = None):
         """
         Initialize single image source
         
         Args:
             image_path: Path to the image file
-            resize_to: Resize image to (width, height) if provided
+            resize_to: Resize image to (width, height) - API convention
         """
         self.image_path = image_path
-        self.resize_to = resize_to
+        
+        # ✅ Validate and store resize_to as (width, height)
+        if resize_to is not None:
+            self.resize_to = validate_size(resize_to, "resize_to")
+        else:
+            self.resize_to = None
         
         if not os.path.exists(image_path):
             raise ValueError(f"Image file does not exist: {image_path}")
-        
+    
     def get_images(self) -> Iterator[ImageInfo]:
         """Get the single image"""
         try:
@@ -204,19 +303,21 @@ class SingleImageSource(ImageSource):
             # Convert BGR to RGB
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
-            original_size = (image.shape[1], image.shape[0])
+            # ✅ Get original size
+            original_size = image_size_from_shape(image)
             
+            # ✅ Resize if requested
             if self.resize_to:
-                image = cv2.resize(image, self.resize_to)
+                image = resize_image(image, self.resize_to)
             
             yield ImageInfo(
                 image=image,
                 identifier=os.path.basename(self.image_path),
                 metadata={
                     'filepath': self.image_path,
-                    'original_size': original_size,
+                    'original_size': original_size,  # (width, height)
                     'resized': self.resize_to is not None,
-                    'final_size': (image.shape[1], image.shape[0])
+                    'final_size': image_size_from_shape(image)  # (width, height)
                 },
                 source_type=ImageSourceType.SINGLE_IMAGE
             )
@@ -229,10 +330,14 @@ class SingleImageSource(ImageSource):
         images = list(self.get_images())
         if images:
             img1 = images[0]
-            # Apply transformation to create second image
-            h, w = img1.image.shape[:2]
-            M = cv2.getRotationMatrix2D((w/2, h/2), 10, 0.95)  # 10 degree rotation, slight scale
-            img2_array = cv2.warpAffine(img1.image, M, (w, h))
+            
+            # ✅ Use size from helper function
+            width, height = image_size_from_shape(img1.image)
+            
+            # Apply transformation
+            M = cv2.getRotationMatrix2D((width/2, height/2), 10, 0.95)
+            img2_array = cv2.warpAffine(img1.image, M, (width, height))
+            
             img2 = ImageInfo(
                 image=img2_array,
                 identifier=f"{img1.identifier}_transformed",
@@ -241,7 +346,7 @@ class SingleImageSource(ImageSource):
             )
             img2.metadata['transformation'] = 'rotation_10deg_scale_0.95'
             yield (img1, img2)
-    
+
     def get_source_info(self) -> Dict[str, Any]:
         """Get information about this image source"""
         return {
@@ -265,7 +370,8 @@ def load_images_from_folder(folder_path: str,
     Args:
         folder_path: Path to folder containing images
         max_images: Maximum number of images to load
-        resize_to: Resize to (width, height) if provided
+        resize_to: Resize to (width, height) - API convention
+                  Example: (1920, 1080) for Full HD
         extensions: File extensions to search for
     
     Returns:
@@ -275,6 +381,7 @@ def load_images_from_folder(folder_path: str,
     return [(img_info.image, img_info.identifier) for img_info in source.get_images()]
 
 
+
 def load_single_image(image_path: str, 
                      resize_to: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, str]:
     """
@@ -282,7 +389,7 @@ def load_single_image(image_path: str,
     
     Args:
         image_path: Path to image file
-        resize_to: Resize to (width, height) if provided
+        resize_to: Resize to (width, height) - API convention
     
     Returns:
         Tuple of (image_array, filename)
