@@ -30,6 +30,7 @@ from .core_data_structures import (
     FeatureData,
     MatchData,
     EnhancedDMatch,
+    MultiMethodMatchData,
     DetectorType,
     ScoreType,
     keypoints_to_serializable,
@@ -419,7 +420,7 @@ def print_capabilities():
 # Export main components for easy access
 __all__ = [
     # Core data structures
-    'FeatureData', 'MatchData', 'EnhancedDMatch', 'DetectorType', 'ScoreType',
+    'FeatureData', 'MatchData', 'EnhancedDMatch', 'MultiMethodMatchData', 'DetectorType', 'ScoreType',
     'keypoints_to_serializable', 'keypoints_from_serializable',
     
     # Base classes

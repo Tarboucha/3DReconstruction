@@ -8,8 +8,9 @@ throughout the feature detection and matching pipeline.
 import cv2
 import numpy as np
 from typing import List, Tuple, Dict, Optional, Union, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+
 import time
 
 
@@ -68,8 +69,9 @@ class EnhancedDMatch:
     score: float
     score_type: ScoreType
     imgIdx: int = 0
-    raw_distance: Optional[float] = None  # Original distance if available
-    confidence: Optional[float] = None    # Confidence score if available
+    raw_distance: Optional[float] = None
+    confidence: Optional[float] = None
+    source_method: Optional[str] = None 
     
     @property
     def distance(self) -> float:
@@ -201,3 +203,139 @@ def keypoints_from_serializable(keypoints_data: List[Dict]) -> List[cv2.KeyPoint
         )
         keypoints.append(kp)
     return keypoints
+
+# In core_data_structures.py - ADD THIS NEW CLASS
+
+@dataclass
+class MultiMethodMatchData:
+    """Container for matches from multiple methods"""
+    
+    # Method-separated matches with their metadata
+    per_method_matches: Dict[str, MatchData] = field(default_factory=dict)
+    
+    # Combined keypoint lists (for unified indexing)
+    all_keypoints1: List[cv2.KeyPoint] = field(default_factory=list)
+    all_keypoints2: List[cv2.KeyPoint] = field(default_factory=list)
+    
+    # Index mapping: method -> (offset1, offset2)
+    method_offsets: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    
+    # Filtering results (applied across all methods)
+    homography: Optional[np.ndarray] = None
+    filtered_match_indices: Optional[List[int]] = None  # Indices into get_all_matches()
+    
+    def add_method_matches(self, method: str, match_data: MatchData, 
+                          offset1: int, offset2: int):
+        """Add matches from a specific method"""
+        self.per_method_matches[method] = match_data
+        self.method_offsets[method] = (offset1, offset2)
+    
+    def get_all_matches(self, apply_offsets: bool = True) -> List[EnhancedDMatch]:
+        """
+        Get all matches from all methods combined
+        
+        Args:
+            apply_offsets: If True, adjust indices to point to combined keypoint lists
+        
+        Returns:
+            List of all matches (with proper indexing)
+        """
+        all_matches = []
+        
+        for method, match_data in self.per_method_matches.items():
+            offset1, offset2 = self.method_offsets[method]
+            
+            for match in match_data.matches:
+                if apply_offsets:
+                    # Create new match with offset indices
+                    if isinstance(match, EnhancedDMatch):
+                        new_match = EnhancedDMatch(
+                            queryIdx=match.queryIdx + offset1,
+                            trainIdx=match.trainIdx + offset2,
+                            score=match.score,
+                            score_type=match.score_type,
+                            raw_distance=match.raw_distance,
+                            confidence=match.confidence
+                        )
+                        # Store method information
+                        new_match.source_method = method
+                    else:
+                        new_match = cv2.DMatch()
+                        new_match.queryIdx = match.queryIdx + offset1
+                        new_match.trainIdx = match.trainIdx + offset2
+                        new_match.distance = match.distance
+                        new_match.imgIdx = match.imgIdx
+                    
+                    all_matches.append(new_match)
+                else:
+                    all_matches.append(match)
+        
+        return all_matches
+    
+    def get_filtered_matches(self) -> List[EnhancedDMatch]:
+        """Get matches after filtering has been applied"""
+        if self.filtered_match_indices is None:
+            return self.get_all_matches()
+        
+        all_matches = self.get_all_matches()
+        return [all_matches[i] for i in self.filtered_match_indices]
+    
+    def get_method_matches(self, method: str, with_offsets: bool = False) -> List:
+        """Get matches from a specific method"""
+        if method not in self.per_method_matches:
+            return []
+        
+        matches = self.per_method_matches[method].matches
+        
+        if with_offsets:
+            offset1, offset2 = self.method_offsets[method]
+            adjusted = []
+            for m in matches:
+                if isinstance(m, EnhancedDMatch):
+                    new_m = EnhancedDMatch(
+                        queryIdx=m.queryIdx + offset1,
+                        trainIdx=m.trainIdx + offset2,
+                        score=m.score,
+                        score_type=m.score_type,
+                        raw_distance=m.raw_distance,
+                        confidence=m.confidence
+                    )
+                else:
+                    new_m = cv2.DMatch()
+                    new_m.queryIdx = m.queryIdx + offset1
+                    new_m.trainIdx = m.trainIdx + offset2
+                    new_m.distance = m.distance
+                adjusted.append(new_m)
+            return adjusted
+        
+        return matches
+    
+    def get_methods(self) -> List[str]:
+        """Get list of methods that contributed matches"""
+        return list(self.per_method_matches.keys())
+    
+    def get_stats(self) -> Dict[str, Dict]:
+        """Get statistics for each method"""
+        stats = {}
+        
+        for method, match_data in self.per_method_matches.items():
+            scores = match_data.get_match_scores()
+            
+            stats[method] = {
+                'num_matches': len(match_data.matches),
+                'score_type': match_data.score_type.value,
+                'offset1': self.method_offsets[method][0],
+                'offset2': self.method_offsets[method][1]
+            }
+            
+            if len(scores) > 0:
+                stats[method]['score_mean'] = float(np.mean(scores))
+                stats[method]['score_std'] = float(np.std(scores))
+                stats[method]['score_min'] = float(np.min(scores))
+                stats[method]['score_max'] = float(np.max(scores))
+        
+        return stats
+    
+    def __len__(self) -> int:
+        """Total number of matches across all methods"""
+        return len(self.get_all_matches())

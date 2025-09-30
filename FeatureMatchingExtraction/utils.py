@@ -2,7 +2,7 @@
 Utility functions for feature detection and matching.
 
 This module contains helper functions for filtering, visualization,
-analysis, and other utility operations.
+analysis, image loading, and other utility operations.
 """
 
 import cv2
@@ -14,50 +14,410 @@ import time
 import os
 import glob
 from pathlib import Path
-from dataclasses import is_dataclass, asdict
-from typing import List, Tuple, Dict, Optional, Union, Any
-from .core_data_structures import FeatureData, MatchData, EnhancedDMatch, ScoreType
+from dataclasses import dataclass, field, is_dataclass, asdict
+from abc import ABC, abstractmethod
+from typing import List, Tuple, Dict, Optional, Union, Any, Iterator
+from enum import Enum
+
+from .core_data_structures import FeatureData, MatchData, EnhancedDMatch, MultiMethodMatchData, ScoreType
+
+
+# =============================================================================
+# Image Source Classes (moved from benchmark_pipeline.py)
+# =============================================================================
+
+class ImageSourceType(Enum):
+    """Types of image sources"""
+    SYNTHETIC = "synthetic"
+    FOLDER = "folder"
+    SINGLE_IMAGE = "single_image"
+    IMAGE_LIST = "image_list"
+    CUSTOM = "custom"
+
+
+@dataclass
+class ImageInfo:
+    """Unified image information container"""
+    image: np.ndarray
+    identifier: str  # filename, index, or custom ID
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    source_type: ImageSourceType = ImageSourceType.CUSTOM
+    
+    @property
+    def size(self) -> Tuple[int, int]:
+        """Return (width, height)"""
+        return (self.image.shape[1], self.image.shape[0])
+    
+    @property
+    def channels(self) -> int:
+        return self.image.shape[2] if len(self.image.shape) > 2 else 1
+
+
+class ImageSource(ABC):
+    """Abstract base class for image sources"""
+    
+    @abstractmethod
+    def get_images(self) -> Iterator[ImageInfo]:
+        """Yield ImageInfo objects"""
+        pass
+    
+    @abstractmethod
+    def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
+        """Yield pairs of ImageInfo objects for matching"""
+        pass
+    
+    @abstractmethod
+    def get_source_info(self) -> Dict[str, Any]:
+        """Return information about this source"""
+        pass
+
+
+class FolderImageSource(ImageSource):
+    """Load images from a folder"""
+    
+    def __init__(self, folder_path: str, 
+                 max_images: Optional[int] = None,
+                 resize_to: Optional[Tuple[int, int]] = None,
+                 image_extensions: List[str] = None):
+        """
+        Initialize folder image source
+        
+        Args:
+            folder_path: Path to folder containing images
+            max_images: Maximum number of images to load (None for all)
+            resize_to: Resize images to (width, height) if provided
+            image_extensions: List of file extensions to search for
+        """
+        self.folder_path = Path(folder_path)
+        self.max_images = max_images
+        self.resize_to = resize_to
+        self.image_extensions = image_extensions or ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+        
+        if not self.folder_path.exists():
+            raise ValueError(f"Folder does not exist: {folder_path}")
+        
+    def get_images(self) -> Iterator[ImageInfo]:
+        """Get images from folder"""
+        # Find all image files
+        image_files = []
+        for ext in self.image_extensions:
+            # Search for both lowercase and uppercase extensions
+            image_files.extend(glob.glob(str(self.folder_path / f"*{ext}")))
+            #image_files.extend(glob.glob(str(self.folder_path / f"*{ext.upper()}")))
+        
+        image_files = sorted(list(set(image_files)))  # Remove duplicates and sort
+        
+        if self.max_images:
+            image_files = image_files[:self.max_images]
+        
+        for img_file in image_files:
+            try:
+                image = cv2.imread(img_file)
+                if image is None:
+                    print(f"Warning: Could not load image {img_file}")
+                    continue
+                
+                # Convert BGR to RGB for consistency
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                
+                original_size = (image.shape[1], image.shape[0])
+                
+                # Resize if requested
+                if self.resize_to:
+                    image = cv2.resize(image, self.resize_to)
+                
+                yield ImageInfo(
+                    image=image,
+                    identifier=os.path.basename(img_file),
+                    metadata={
+                        'filepath': img_file,
+                        'original_size': original_size,
+                        'resized': self.resize_to is not None,
+                        'final_size': (image.shape[1], image.shape[0])
+                    },
+                    source_type=ImageSourceType.FOLDER
+                )
+                
+            except Exception as e:
+                print(f"Error loading {img_file}: {e}")
+    
+    def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
+        """Generate pairs of images for matching benchmarks"""
+        images = list(self.get_images())
+        
+        # Create pairs from consecutive images
+        for i in range(len(images) - 1):
+            yield (images[i], images[i + 1])
+        
+        # Add some additional pairs for more robust testing
+        if len(images) > 2:
+            # First with last
+            yield (images[0], images[-1])
+            # Middle pairs
+            if len(images) > 3:
+                mid = len(images) // 2
+                yield (images[mid], images[mid + 1])
+    
+    def get_source_info(self) -> Dict[str, Any]:
+        """Get information about this image source"""
+        return {
+            'type': 'folder',
+            'folder_path': str(self.folder_path),
+            'extensions': self.image_extensions,
+            'resize_to': self.resize_to,
+            'max_images': self.max_images
+        }
+    
+    def get_image_count(self) -> int:
+        """Get total number of images in folder"""
+        return len(list(self.get_images()))
+    
+    def get_image_list(self) -> List[ImageInfo]:
+        """Get all images as a list (loads all into memory)"""
+        return list(self.get_images())
+
+
+class SingleImageSource(ImageSource):
+    """Single image source"""
+    
+    def __init__(self, image_path: str, resize_to: Optional[Tuple[int, int]] = None):
+        """
+        Initialize single image source
+        
+        Args:
+            image_path: Path to the image file
+            resize_to: Resize image to (width, height) if provided
+        """
+        self.image_path = image_path
+        self.resize_to = resize_to
+        
+        if not os.path.exists(image_path):
+            raise ValueError(f"Image file does not exist: {image_path}")
+        
+    def get_images(self) -> Iterator[ImageInfo]:
+        """Get the single image"""
+        try:
+            image = cv2.imread(self.image_path)
+            if image is None:
+                raise ValueError(f"Could not load image: {self.image_path}")
+            
+            # Convert BGR to RGB
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            original_size = (image.shape[1], image.shape[0])
+            
+            if self.resize_to:
+                image = cv2.resize(image, self.resize_to)
+            
+            yield ImageInfo(
+                image=image,
+                identifier=os.path.basename(self.image_path),
+                metadata={
+                    'filepath': self.image_path,
+                    'original_size': original_size,
+                    'resized': self.resize_to is not None,
+                    'final_size': (image.shape[1], image.shape[0])
+                },
+                source_type=ImageSourceType.SINGLE_IMAGE
+            )
+            
+        except Exception as e:
+            print(f"Error loading {self.image_path}: {e}")
+    
+    def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
+        """For single image, create a transformed version for pairing"""
+        images = list(self.get_images())
+        if images:
+            img1 = images[0]
+            # Apply transformation to create second image
+            h, w = img1.image.shape[:2]
+            M = cv2.getRotationMatrix2D((w/2, h/2), 10, 0.95)  # 10 degree rotation, slight scale
+            img2_array = cv2.warpAffine(img1.image, M, (w, h))
+            img2 = ImageInfo(
+                image=img2_array,
+                identifier=f"{img1.identifier}_transformed",
+                metadata=img1.metadata.copy(),
+                source_type=img1.source_type
+            )
+            img2.metadata['transformation'] = 'rotation_10deg_scale_0.95'
+            yield (img1, img2)
+    
+    def get_source_info(self) -> Dict[str, Any]:
+        """Get information about this image source"""
+        return {
+            'type': 'single_image',
+            'image_path': self.image_path,
+            'resize_to': self.resize_to
+        }
+
+
+# =============================================================================
+# Convenience Functions for Image Loading
+# =============================================================================
+
+def load_images_from_folder(folder_path: str, 
+                           max_images: Optional[int] = None,
+                           resize_to: Optional[Tuple[int, int]] = None,
+                           extensions: List[str] = None) -> List[Tuple[np.ndarray, str]]:
+    """
+    Load images from a folder and return as list of (image, filename) tuples
+    
+    Args:
+        folder_path: Path to folder containing images
+        max_images: Maximum number of images to load
+        resize_to: Resize to (width, height) if provided
+        extensions: File extensions to search for
+    
+    Returns:
+        List of (image_array, filename) tuples
+    """
+    source = FolderImageSource(folder_path, max_images, resize_to, extensions)
+    return [(img_info.image, img_info.identifier) for img_info in source.get_images()]
+
+
+def load_single_image(image_path: str, 
+                     resize_to: Optional[Tuple[int, int]] = None) -> Tuple[np.ndarray, str]:
+    """
+    Load a single image
+    
+    Args:
+        image_path: Path to image file
+        resize_to: Resize to (width, height) if provided
+    
+    Returns:
+        Tuple of (image_array, filename)
+    """
+    source = SingleImageSource(image_path, resize_to)
+    img_info = next(source.get_images())
+    return img_info.image, img_info.identifier
+
+
+def get_images_from_folder(folder_path: str, extensions: List[str] = None) -> List[str]:
+    """
+    Extract all image file paths from a given folder
+    
+    Args:
+        folder_path: Path to the folder containing images
+        extensions: List of extensions to search for
+    
+    Returns:
+        List of full paths to image files
+    """
+    if extensions is None:
+        extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
+    
+    image_paths = []
+    
+    if not os.path.exists(folder_path):
+        print(f"Folder does not exist: {folder_path}")
+        return []
+    
+    # Search for all image files with different extensions
+    for extension in extensions:
+        pattern = os.path.join(folder_path, extension)
+        # Case-insensitive search
+        image_paths.extend(glob.glob(pattern))
+        image_paths.extend(glob.glob(pattern.upper()))
+
+    # Remove duplicates and sort
+    image_paths = sorted(list(set(image_paths)))
+    
+    return image_paths
 
 
 # =============================================================================
 # Filtering Functions
 # =============================================================================
-
 def enhanced_filter_matches_with_homography(
     kp1: List[cv2.KeyPoint], 
     kp2: List[cv2.KeyPoint],
-    matches: List[Union[cv2.DMatch, EnhancedDMatch]],
-    match_data: MatchData,
+    matches: Union[List[Union[cv2.DMatch, EnhancedDMatch]], MultiMethodMatchData],  # ✓ Accept new type
+    match_data: Union[MatchData, MultiMethodMatchData],  # ✓ Accept new type
     ransac_threshold: float = 5.0,
     confidence: float = 0.99,
     max_iters: int = 2000
 ) -> Tuple[List[Union[cv2.DMatch, EnhancedDMatch]], np.ndarray]:
     """Enhanced filter matches using RANSAC homography with score awareness"""
+    
+    # Handle MultiMethodMatchData
+    if isinstance(matches, MultiMethodMatchData):
+        matches = matches.get_all_matches()  # Get actual match list
+    elif isinstance(match_data, MultiMethodMatchData):
+        matches = match_data.get_all_matches()
+    
     if len(matches) < 4:
+        return matches, None    
+    
+    # CRITICAL FIX: Validate ALL match indices before processing
+    max_idx1 = len(kp1) - 1
+    max_idx2 = len(kp2) - 1
+    
+    valid_matches = []
+    invalid_count = 0
+    
+    for m in matches:
+        # Check if indices are within bounds
+        if m.queryIdx <= max_idx1 and m.trainIdx <= max_idx2 and m.queryIdx >= 0 and m.trainIdx >= 0:
+            valid_matches.append(m)
+        else:
+            invalid_count += 1
+            if invalid_count <= 5:  # Only print first 5 to avoid spam
+                print(f"Warning: Invalid match - queryIdx={m.queryIdx} (max={max_idx1}), "
+                      f"trainIdx={m.trainIdx} (max={max_idx2})")
+    
+    if invalid_count > 0:
+        print(f"Total invalid matches filtered: {invalid_count}/{len(matches)}")
+    
+    # Check if we have enough valid matches
+    if len(valid_matches) < 4:
+        print(f"Error: Only {len(valid_matches)} valid matches after filtering (need 4+ for homography)")
+        print(f"  Keypoints: kp1={len(kp1)}, kp2={len(kp2)}")
+        print(f"  Original matches: {len(matches)}")
+        return valid_matches if valid_matches else matches[:min(len(matches), 4)], None
+    
+    # Use only valid matches from here on
+    matches = valid_matches
+    
+    # Convert matches to points - now guaranteed to be safe
+    try:
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+    except IndexError as e:
+        # This should never happen after validation, but handle it anyway
+        print(f"CRITICAL: Index error after validation: {e}")
+        print(f"  kp1 length: {len(kp1)}, kp2 length: {len(kp2)}")
+        print(f"  Match count: {len(matches)}")
+        if matches:
+            print(f"  queryIdx range: [{min(m.queryIdx for m in matches)}, {max(m.queryIdx for m in matches)}]")
+            print(f"  trainIdx range: [{min(m.trainIdx for m in matches)}, {max(m.trainIdx for m in matches)}]")
+        return matches, None
+    except Exception as e:
+        print(f"Unexpected error extracting points: {e}")
         return matches, None
     
-    # Convert matches to points
-    if isinstance(matches[0], EnhancedDMatch):
-        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-    else:
-        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-    
     # Find homography with RANSAC
-    homography, mask = cv2.findHomography(
-        src_pts, dst_pts, 
-        cv2.RANSAC, 
-        ransac_threshold,
-        confidence=confidence,
-        maxIters=max_iters
-    )
+    try:
+        homography, mask = cv2.findHomography(
+            src_pts, dst_pts, 
+            cv2.RANSAC, 
+            ransac_threshold,
+            confidence=confidence,
+            maxIters=max_iters
+        )
+    except cv2.error as e:
+        print(f"OpenCV error computing homography: {e}")
+        return matches, None
     
+    # Filter matches based on inliers
     filtered_matches = []
     if mask is not None:
         for i, match in enumerate(matches):
             if mask[i]:
                 filtered_matches.append(match)
+    else:
+        # No mask returned - homography estimation failed
+        print("Warning: Homography estimation failed, returning unfiltered matches")
+        return matches, homography
     
     # Sort filtered matches by quality score
     if filtered_matches and match_data.score_type == ScoreType.CONFIDENCE:
@@ -72,16 +432,49 @@ def enhanced_filter_matches_with_homography(
             key=lambda x: x.score if isinstance(x, EnhancedDMatch) else x.distance
         )
     
+    inlier_ratio = len(filtered_matches) / len(matches) if matches else 0
+    print(f"Homography filtering: {len(matches)} → {len(filtered_matches)} matches (inlier ratio: {inlier_ratio:.2%})")
+    
     return filtered_matches, homography
 
 
 def adaptive_match_filtering(
-    match_data: MatchData, 
+    match_data: Union[MatchData, MultiMethodMatchData],  # ✓ Accept new type
     adaptive_threshold: bool = True,
     top_k: Optional[int] = None,
     percentile_threshold: float = 75.0
-) -> MatchData:
+) -> Union[MatchData, MultiMethodMatchData]:
     """Adaptive filtering based on score type and distribution"""
+    
+    # Handle MultiMethodMatchData
+    if isinstance(match_data, MultiMethodMatchData):
+        # Apply filtering to each method separately to respect score types
+        filtered_multi = MultiMethodMatchData()
+        filtered_multi.all_keypoints1 = match_data.all_keypoints1
+        filtered_multi.all_keypoints2 = match_data.all_keypoints2
+        
+        for method in match_data.get_methods():
+            method_match_data = match_data.per_method_matches[method]
+            offset1, offset2 = match_data.method_offsets[method]
+            
+            # Filter this method's matches
+            if len(method_match_data.matches) > 0:
+                scores = method_match_data.get_match_scores(use_filtered=False)
+                
+                if adaptive_threshold and len(scores) > 5:
+                    if method_match_data.score_type == ScoreType.CONFIDENCE:
+                        threshold = np.percentile(scores, 100 - percentile_threshold)
+                    else:
+                        threshold = np.percentile(scores, percentile_threshold)
+                else:
+                    threshold = 0.2 if method_match_data.score_type == ScoreType.CONFIDENCE else 0.8
+                
+                filtered = method_match_data.filter_by_score(threshold, top_k)
+                filtered_multi.add_method_matches(method, filtered, offset1, offset2)
+        
+        return filtered_multi
+    
+    # Original MatchData handling
     if not match_data.matches:
         return match_data
     
@@ -89,17 +482,15 @@ def adaptive_match_filtering(
     
     if adaptive_threshold and len(scores) > 5:
         if match_data.score_type == ScoreType.CONFIDENCE:
-            # Use percentile for confidence scores (keep top X%)
             threshold = np.percentile(scores, 100 - percentile_threshold)
         else:
-            # Use percentile for distance scores (keep bottom X%)
             threshold = np.percentile(scores, percentile_threshold)
     else:
-        # Use fixed thresholds
         threshold = 0.2 if match_data.score_type == ScoreType.CONFIDENCE else 0.8
     
     filtered_data = match_data.filter_by_score(threshold, top_k)
     return filtered_data
+
 
 
 def remove_duplicate_matches(
@@ -143,10 +534,14 @@ def remove_duplicate_matches(
 def extract_correspondences(
     kp1: List[cv2.KeyPoint], 
     kp2: List[cv2.KeyPoint],
-    matches: List[Union[cv2.DMatch, EnhancedDMatch]],
+    matches: Union[List[Union[cv2.DMatch, EnhancedDMatch]], MultiMethodMatchData],  # ✓ Accept new type
     include_scores: bool = True
 ) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
     """Enhanced correspondence extraction with optional score information"""
+
+    if isinstance(matches, MultiMethodMatchData):
+        matches = matches.get_filtered_matches()
+    
     if not matches:
         if include_scores:
             return np.array([]).reshape(0, 4), np.array([])
@@ -173,7 +568,6 @@ def extract_correspondences(
     if include_scores:
         return correspondences, scores
     return correspondences
-
 
 # =============================================================================
 # Visualization Functions
@@ -280,8 +674,47 @@ class MatchQualityAnalyzer:
     """Analyze and compare match quality across different methods"""
     
     @staticmethod
-    def analyze_match_data(match_data: MatchData) -> Dict[str, Any]:
+    def analyze_match_data(match_data: Union[MatchData, MultiMethodMatchData]) -> Dict[str, Any]:
         """Analyze match data and return quality metrics"""
+        
+        # Handle MultiMethodMatchData
+        if isinstance(match_data, MultiMethodMatchData):
+            # Return aggregated analysis across all methods
+            all_matches = match_data.get_filtered_matches()
+            
+            if len(all_matches) == 0:
+                return {
+                    'num_matches': 0,
+                    'quality_score': 0.0,
+                    'method': 'Multi-Method',
+                    'per_method': {}
+                }
+            
+            # Analyze each method separately
+            per_method_analysis = {}
+            for method in match_data.get_methods():
+                method_data = match_data.per_method_matches[method]
+                per_method_analysis[method] = MatchQualityAnalyzer.analyze_match_data(method_data)
+            
+            # Compute overall quality as weighted average
+            total_matches = sum(a['num_matches'] for a in per_method_analysis.values())
+            if total_matches > 0:
+                weighted_quality = sum(
+                    a['num_matches'] * a['quality_score'] 
+                    for a in per_method_analysis.values()
+                ) / total_matches
+            else:
+                weighted_quality = 0.0
+            
+            return {
+                'num_matches': len(all_matches),
+                'quality_score': weighted_quality,
+                'method': 'Multi-Method',
+                'per_method': per_method_analysis,
+                'methods': match_data.get_methods()
+            }
+        
+        # Original MatchData handling
         scores = match_data.get_match_scores()
         
         if len(scores) == 0:
@@ -303,18 +736,16 @@ class MatchQualityAnalyzer:
             'method': match_data.method
         }
         
-        # Calculate normalized quality score (0-1, higher is better)
+        # Calculate normalized quality score
         if match_data.score_type == ScoreType.CONFIDENCE:
-            quality_score = np.mean(scores)  # Already 0-1, higher is better
+            quality_score = np.mean(scores)
         else:  # DISTANCE
-            # Convert distance to quality (invert and normalize)
-            max_reasonable_dist = 2.0  # Reasonable max distance
+            max_reasonable_dist = 2.0
             normalized_scores = 1.0 - np.clip(scores / max_reasonable_dist, 0, 1)
             quality_score = np.mean(normalized_scores)
         
         analysis['quality_score'] = float(quality_score)
         
-        # Add distribution percentiles
         if len(scores) >= 5:
             analysis['percentiles'] = {
                 '25th': float(np.percentile(scores, 25)),
@@ -380,7 +811,6 @@ class MatchQualityAnalyzer:
                 report.append(f"  90th Percentile: {analysis['percentiles']['90th']:.3f}")
         
         return "\n".join(report)
-
 
 
 # =============================================================================
@@ -481,43 +911,8 @@ def benchmark_detector_performance(
 
 
 # =============================================================================
-# Save/Load Funtions
+# Save/Load Functions
 # =============================================================================
-
-
-
-def get_images_from_folder(folder_path):
-    """
-    Extract all image files from a given folder
-    
-    Args:
-        folder_path (str): Path to the folder containing images
-    
-    Returns:
-        list: List of full paths to image files
-    """
-    # Common image extensions
-    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
-    
-    image_paths = []
-    
-    # Check if folder exists
-    if not os.path.exists(folder_path):
-        print(f"Folder does not exist: {folder_path}")
-        return []
-    
-    # Search for all image files with different extensions
-    for extension in image_extensions:
-        pattern = os.path.join(folder_path, extension)
-        # Case-insensitive search
-        image_paths.extend(glob.glob(pattern))
-
-    # Remove duplicates and sort
-    image_paths = sorted(list(set(image_paths)))
-    
-    return image_paths
-
-
 
 def save_enhanced_results(results: Any, 
                          filepath: Union[str, Path], 
@@ -686,6 +1081,17 @@ def _make_json_serializable(obj: Any) -> Any:
             'data': obj.tolist(),
             'dtype': str(obj.dtype),
             'shape': obj.shape
+        }
+    elif type(obj).__name__ == 'MultiMethodMatchData':
+        return {
+            '_type': 'MultiMethodMatchData',
+            'methods': obj.get_methods(),
+            'stats': obj.get_stats(),
+            'total_matches': len(obj),
+            'per_method_matches': {
+                method: _make_json_serializable(obj.per_method_matches[method])
+                for method in obj.get_methods()
+            }
         }
     elif isinstance(obj, (np.integer, np.floating)):
         return obj.item()  # Convert numpy scalars to Python scalars

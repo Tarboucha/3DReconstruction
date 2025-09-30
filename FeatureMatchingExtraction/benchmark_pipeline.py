@@ -26,21 +26,18 @@ from .traditional_detectors import create_traditional_detector
 from .feature_matchers import create_traditional_matcher, auto_select_matcher
 from .pipeline import FeatureProcessingPipeline
 from .core_data_structures import MatchData
+from .utils import (
+    ImageSource, ImageInfo, ImageSourceType, 
+    FolderImageSource, SingleImageSource,
+    save_enhanced_results
+)
+
 
 class BenchmarkType(Enum):
     """Types of benchmarks available"""
     PERFORMANCE = "performance"
     ACCURACY = "accuracy" 
     COMPREHENSIVE = "comprehensive"
-
-
-class ImageSourceType(Enum):
-    """Types of image sources"""
-    SYNTHETIC = "synthetic"
-    FOLDER = "folder"
-    SINGLE_IMAGE = "single_image"
-    IMAGE_LIST = "image_list"
-    CUSTOM = "custom"
 
 
 @dataclass
@@ -88,49 +85,12 @@ class UnifiedBenchmarkConfig:
     save_plots: bool = True
 
 
-@dataclass
-class ImageInfo:
-    """Unified image information container"""
-    image: np.ndarray
-    identifier: str  # filename, index, or custom ID
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    source_type: ImageSourceType = ImageSourceType.CUSTOM
-    
-    @property
-    def size(self) -> Tuple[int, int]:
-        """Return (width, height)"""
-        return (self.image.shape[1], self.image.shape[0])
-    
-    @property
-    def channels(self) -> int:
-        return self.image.shape[2] if len(self.image.shape) > 2 else 1
-
-
 # =============================================================================
-# Image Source Abstractions
+# Synthetic Image Source (Benchmark-Specific)
 # =============================================================================
-
-class ImageSource(ABC):
-    """Abstract base class for image sources"""
-    
-    @abstractmethod
-    def get_images(self) -> Iterator[ImageInfo]:
-        """Yield ImageInfo objects"""
-        pass
-    
-    @abstractmethod
-    def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
-        """Yield pairs of ImageInfo objects for matching"""
-        pass
-    
-    @abstractmethod
-    def get_source_info(self) -> Dict[str, Any]:
-        """Return information about this source"""
-        pass
-
 
 class SyntheticImageSource(ImageSource):
-    """Generate synthetic images on-demand"""
+    """Generate synthetic images on-demand for benchmarking"""
     
     def __init__(self, config: UnifiedBenchmarkConfig):
         self.config = config
@@ -195,132 +155,32 @@ class SyntheticImageSource(ImageSource):
         }
 
 
-class FolderImageSource(ImageSource):
-    """Load images from a folder"""
+# =============================================================================
+# Enhanced Image Sources (Using utils.py classes with config integration)
+# =============================================================================
+
+class ConfiguredFolderImageSource(FolderImageSource):
+    """FolderImageSource with benchmark config integration"""
     
     def __init__(self, folder_path: str, config: UnifiedBenchmarkConfig):
-        self.folder_path = Path(folder_path)
+        super().__init__(
+            folder_path=folder_path,
+            max_images=config.max_images,
+            resize_to=config.resize_to,
+            image_extensions=config.image_extensions
+        )
         self.config = config
-        
-    def get_images(self) -> Iterator[ImageInfo]:
-        # Find all image files
-        image_files = []
-        for ext in self.config.image_extensions:
-            image_files.extend(glob.glob(str(self.folder_path / f"*{ext}")))
-            #image_files.extend(glob.glob(str(self.folder_path / f"*{ext.upper()}")))
-        
-        image_files = sorted(image_files)
-        
-        if self.config.max_images:
-            image_files = image_files[:self.config.max_images]
-        
-        for img_file in image_files:
-            try:
-                image = cv2.imread(img_file)
-                if image is None:
-                    continue
-                
-                original_size = (image.shape[1], image.shape[0])
-                
-                # Resize if requested
-                if self.config.resize_to:
-                    image = cv2.resize(image, self.config.resize_to)
-                
-                yield ImageInfo(
-                    image=image,
-                    identifier=os.path.basename(img_file),
-                    metadata={
-                        'filepath': img_file,
-                        'original_size': original_size,
-                        'resized': self.config.resize_to is not None
-                    },
-                    source_type=ImageSourceType.FOLDER
-                )
-                
-            except Exception as e:
-                print(f"Error loading {img_file}: {e}")
-    
-    def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
-        """Generate pairs of images for matching benchmarks"""
-        images = list(self.get_images())
-        
-        # Create pairs from consecutive images
-        for i in range(len(images) - 1):
-            yield (images[i], images[i + 1])
-        
-        # Add some additional pairs for more robust testing
-        if len(images) > 2:
-            # First with last
-            yield (images[0], images[-1])
-            # Middle pairs
-            if len(images) > 3:
-                mid = len(images) // 2
-                yield (images[mid], images[mid + 1])
-    
-    def get_source_info(self) -> Dict[str, Any]:
-        return {
-            'type': 'folder',
-            'folder_path': str(self.folder_path),
-            'extensions': self.config.image_extensions,
-            'resize_to': self.config.resize_to
-        }
 
 
-class SingleImageSource(ImageSource):
-    """Single image source"""
+class ConfiguredSingleImageSource(SingleImageSource):
+    """SingleImageSource with benchmark config integration"""
     
     def __init__(self, image_path: str, config: UnifiedBenchmarkConfig):
-        self.image_path = image_path
+        super().__init__(
+            image_path=image_path,
+            resize_to=config.resize_to
+        )
         self.config = config
-        
-    def get_images(self) -> Iterator[ImageInfo]:
-        try:
-            image = cv2.imread(self.image_path)
-            if image is None:
-                raise ValueError(f"Could not load image: {self.image_path}")
-            
-            original_size = (image.shape[1], image.shape[0])
-            
-            if self.config.resize_to:
-                image = cv2.resize(image, self.config.resize_to)
-            
-            yield ImageInfo(
-                image=image,
-                identifier=os.path.basename(self.image_path),
-                metadata={
-                    'filepath': self.image_path,
-                    'original_size': original_size,
-                    'resized': self.config.resize_to is not None
-                },
-                source_type=ImageSourceType.SINGLE_IMAGE
-            )
-            
-        except Exception as e:
-            print(f"Error loading {self.image_path}: {e}")
-    
-    def get_image_pairs(self) -> Iterator[Tuple[ImageInfo, ImageInfo]]:
-        """For single image, create a transformed version for pairing"""
-        images = list(self.get_images())
-        if images:
-            img1 = images[0]
-            # Apply transformation to create second image
-            h, w = img1.image.shape[:2]
-            M = cv2.getRotationMatrix2D((w/2, h/2), 10, 0.95)  # 10 degree rotation, slight scale
-            img2_array = cv2.warpAffine(img1.image, M, (w, h))
-            img2 = ImageInfo(
-                image=img2_array,
-                identifier=f"{img1.identifier}_transformed",
-                metadata=img1.metadata.copy(),
-                source_type=img1.source_type
-            )
-            yield (img1, img2)
-    
-    def get_source_info(self) -> Dict[str, Any]:
-        return {
-            'type': 'single_image',
-            'image_path': self.image_path,
-            'resize_to': self.config.resize_to
-        }
 
 
 # =============================================================================
@@ -493,7 +353,7 @@ class PerformanceTask(BenchmarkTask):
                     # Deep learning detectors: use provided detector and matcher
                     features1 = detector.detect(img1_info.image)
                     features2 = detector.detect(img2_info.image)
-
+                    
                     # Match features with provided matcher
                     if len(features1.keypoints) > 0 and len(features2.keypoints) > 0:
                         match_data = matcher.match(features1, features2)
@@ -518,6 +378,15 @@ class PerformanceTask(BenchmarkTask):
                         'memory_increase_mb': memory_after - memory_before,
                         'traced_peak_mb': peak / 1024 / 1024
                     }
+                
+                if hasattr(match_data, 'get_all_matches'):
+                    # MultiMethodMatchData
+                    num_matches = len(match_data.get_all_matches())
+                elif hasattr(match_data, 'matches'):
+                    # MatchData
+                    num_matches = len(match_data.matches)
+                else:
+                    num_matches = 0
                 
                 run_results.append({
                     'run': run,
@@ -772,157 +641,6 @@ class AccuracyTask(BenchmarkTask):
                 features2 = detector.detect(img2)
                 
                 if len(features1.keypoints) > 0 and len(features2.keypoints) > 0:
-                    # Create matcher on first use if not provided
-                    if matcher is None:
-                        matcher = auto_select_matcher(features1, features2)
-                    match_data = matcher.match(features1, features2)
-                else:
-                    match_data = MatchData([], method=method)
-                    
-            elif method in ['SuperPoint', 'DISK', 'ALIKED']:
-                features1 = detector.detect(img1)
-                features2 = detector.detect(img2)
-                
-                if len(features1.keypoints) > 0 and len(features2.keypoints) > 0:
-                    match_data = matcher.match(features1, features2)
-                else:
-                    match_data = MatchData([], method=method)
-            else:
-                raise ValueError(f"Unknown method: {method}")
-            
-            total_time = time.time() - start_time
-            
-            # Analyze match quality
-            matches = match_data.get_best_matches()
-            quality_score = 0.0
-            quality_metrics = {}
-            
-            if len(matches) > 0 and features1 and features2:
-                keypoints1 = features1.keypoints
-                keypoints2 = features2.keypoints
-                match_indices = [(m.queryIdx, m.trainIdx) for m in matches]
-                
-                quality_metrics = self.quality_metrics.comprehensive_quality_assessment(
-                    match_indices, keypoints1, keypoints2, gt_transform
-                )
-                quality_score = quality_metrics.get('overall_quality', 0.0)
-            
-            return {
-                'pair_id': pair_id,
-                'method': method,
-                'transformation': transform_type,
-                'num_matches': len(matches),
-                'quality_score': quality_score,
-                'quality_metrics': quality_metrics,
-                'total_time': total_time,
-                'success': True
-            }
-            
-        except Exception as e:
-            import traceback
-            print(f"      Error in accuracy test: {e}")
-            traceback.print_exc()
-            return {
-                'pair_id': pair_id,
-                'method': method,
-                'transformation': transform_type,
-                'error': str(e),
-                'success': False
-            }
-    
-    def _test_matching_accuracy_with_detector(self, method: str, img1: np.ndarray, img2: np.ndarray, 
-                               gt_transform: np.ndarray, transform_type: str, pair_id: str,
-                               detector: Any, matcher: Any) -> Dict[str, Any]:
-        """Test matching accuracy for a single image pair using provided detector/matcher"""
-        try:
-            start_time = time.time()
-            
-            # Use the provided detector/matcher
-            if method.lower() == 'lightglue':
-                lightglue_matcher = detector  # detector is actually the LightGlue matcher
-                features1, features2, match_data = lightglue_matcher.match_images_directly(img1, img2)
-                
-            elif method in ['SIFT', 'ORB', 'AKAZE', 'BRISK', 'Harris', 'GoodFeatures']:
-                features1 = detector.detect(img1)
-                features2 = detector.detect(img2)
-                
-                if len(features1.keypoints) > 0 and len(features2.keypoints) > 0:
-                    # Create matcher on first use if not provided
-                    if matcher is None:
-                        matcher = auto_select_matcher(features1, features2)
-                    match_data = matcher.match(features1, features2)
-                else:
-                    match_data = MatchData([], method=method)
-                    
-            elif method in ['SuperPoint', 'DISK', 'ALIKED']:
-                features1 = detector.detect(img1)
-                features2 = detector.detect(img2)
-                
-                if len(features1.keypoints) > 0 and len(features2.keypoints) > 0:
-                    match_data = matcher.match(features1, features2)
-                else:
-                    match_data = MatchData([], method=method)
-            else:
-                raise ValueError(f"Unknown method: {method}")
-            
-            total_time = time.time() - start_time
-            
-            # Analyze match quality
-            matches = match_data.get_best_matches()
-            quality_score = 0.0
-            quality_metrics = {}
-            
-            if len(matches) > 0 and features1 and features2:
-                keypoints1 = features1.keypoints
-                keypoints2 = features2.keypoints
-                match_indices = [(m.queryIdx, m.trainIdx) for m in matches]
-                
-                quality_metrics = self.quality_metrics.comprehensive_quality_assessment(
-                    match_indices, keypoints1, keypoints2, gt_transform
-                )
-                quality_score = quality_metrics.get('overall_quality', 0.0)
-            
-            return {
-                'pair_id': pair_id,
-                'method': method,
-                'transformation': transform_type,
-                'num_matches': len(matches),
-                'quality_score': quality_score,
-                'quality_metrics': quality_metrics,
-                'total_time': total_time,
-                'success': True
-            }
-            
-        except Exception as e:
-            import traceback
-            print(f"      Error in accuracy test: {e}")
-            traceback.print_exc()
-            return {
-                'pair_id': pair_id,
-                'method': method,
-                'transformation': transform_type,
-                'error': str(e),
-                'success': False
-            }
-
-    
-    def _test_matching_accuracy_with_detector(self, method: str, img1: np.ndarray, img2: np.ndarray, 
-                               gt_transform: np.ndarray, transform_type: str, pair_id: str,
-                               detector: Any, matcher: Any) -> Dict[str, Any]:
-        """Test matching accuracy for a single image pair using provided detector/matcher"""
-        try:
-            start_time = time.time()
-            
-            # Use the provided detector/matcher
-            if method.lower() == 'lightglue':
-                lightglue_matcher = detector  # detector is actually the LightGlue matcher
-                features1, features2, match_data = lightglue_matcher.match_images_directly(img1, img2)
-                
-            elif method in ['SIFT', 'ORB', 'AKAZE', 'BRISK', 'Harris', 'GoodFeatures']:
-                features1 = detector.detect(img1)
-                features2 = detector.detect(img2)
-                
-                if len(features1.keypoints) > 0 and len(features2.keypoints) > 0:
                     if matcher is None:
                         matcher = auto_select_matcher(features1, features2)
                     match_data = matcher.match(features1, features2)
@@ -946,6 +664,14 @@ class AccuracyTask(BenchmarkTask):
             
             # Analyze match quality
             matches = match_data.get_best_matches()
+            quality_score = 0.0
+            quality_metrics = {}
+            
+            if hasattr(match_data, 'get_filtered_matches'):
+                matches = match_data.get_filtered_matches()
+            else:
+                matches = match_data.get_best_matches()
+            
             quality_score = 0.0
             quality_metrics = {}
             
@@ -1052,7 +778,7 @@ class UnifiedBenchmarkPipeline:
         methods = methods or self.config.methods
         benchmark_types = benchmark_types or self.config.benchmark_types
         
-        image_source = FolderImageSource(folder_path, self.config)
+        image_source = ConfiguredFolderImageSource(folder_path, self.config)
         return self._run_benchmarks(image_source, methods, benchmark_types)
     
     def benchmark_single_image(self, image_path: str, methods: List[str] = None,
@@ -1061,7 +787,7 @@ class UnifiedBenchmarkPipeline:
         methods = methods or self.config.methods
         benchmark_types = benchmark_types or self.config.benchmark_types
         
-        image_source = SingleImageSource(image_path, self.config)
+        image_source = ConfiguredSingleImageSource(image_path, self.config)
         return self._run_benchmarks(image_source, methods, benchmark_types)
     
     def _run_benchmarks(self, image_source: ImageSource, methods: List[str], 
@@ -1160,60 +886,15 @@ class UnifiedBenchmarkPipeline:
             
             # Save as JSON
             results_file = os.path.join(self.config.output_dir, f"benchmark_results_{int(time.time())}.json")
-            with open(results_file, 'w') as f:
-                # Convert numpy arrays and other non-serializable objects
-                serializable_results = self._make_json_serializable(results)
-                json.dump(serializable_results, f, indent=2)
             
-            print(f"\nResults saved to: {results_file}")
+            # Use the save function from utils
+            success = save_enhanced_results(results, results_file, format='json')
+            
+            if success:
+                print(f"\nResults saved to: {results_file}")
             
         except Exception as e:
             print(f"Error saving results: {e}")
-    
-    def _make_json_serializable(self, obj):
-        """Convert non-serializable objects to JSON-compatible format"""
-        if isinstance(obj, dict):
-            return {key: self._make_json_serializable(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [self._make_json_serializable(item) for item in obj]
-        elif isinstance(obj, tuple):
-            return list(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, (np.float32, np.float64, np.float16)):
-            return float(obj)
-        elif isinstance(obj, (np.int32, np.int64, np.int16, np.int8)):
-            return int(obj)
-        elif isinstance(obj, np.bool_):
-            return bool(obj)
-        elif isinstance(obj, bytes):
-            return obj.decode('utf-8') if obj else ''
-        elif isinstance(obj, UnifiedBenchmarkConfig):
-            return {
-                'benchmark_types': [bt.value for bt in obj.benchmark_types],
-                'methods': obj.methods,
-                'num_runs': obj.num_runs,
-                'max_images': obj.max_images,
-                'resize_to': obj.resize_to,
-                'statistical_confidence': obj.statistical_confidence,
-                'memory_profiling': obj.memory_profiling,
-                'save_results': obj.save_results,
-                'output_dir': obj.output_dir
-            }
-        elif isinstance(obj, BenchmarkType):
-            return obj.value
-        elif isinstance(obj, ImageSourceType):
-            return obj.value
-        elif obj is None:
-            return None
-        elif isinstance(obj, (str, int, float, bool)):
-            return obj
-        else:
-            # Try to convert to string as last resort
-            try:
-                return str(obj)
-            except:
-                return f"<non-serializable: {type(obj).__name__}>"
     
     def print_summary(self, results: Dict[str, Any]):
         """Print a formatted summary of results"""

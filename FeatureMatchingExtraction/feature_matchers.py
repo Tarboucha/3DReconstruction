@@ -536,6 +536,8 @@ def auto_select_matcher(features1: FeatureData, features2: FeatureData, **kwargs
     """
     Automatically select appropriate matcher based on feature types
     
+    Handles composite method names like "Weighted(ORB,SIFT)" or "Combined(AKAZE,BRISK)"
+    
     Args:
         features1: Features from first image
         features2: Features from second image
@@ -544,21 +546,62 @@ def auto_select_matcher(features1: FeatureData, features2: FeatureData, **kwargs
     Returns:
         Appropriate matcher instance
     """
-    # Check feature types
-    method1 = features1.method.upper()
-    method2 = features2.method.upper()
     
-    # For binary descriptors, use BF matcher with Hamming distance
-    if any(method in ['ORB', 'BRISK', 'AKAZE'] for method in [method1, method2]):
+    def extract_methods(method_str: str) -> List[str]:
+        """Extract individual method names from composite strings"""
+        import re
+        # Extract methods from patterns like "Weighted(ORB,SIFT)" or "Combined(AKAZE,BRISK)"
+        match = re.search(r'\((.*?)\)', method_str)
+        if match:
+            methods = [m.strip().upper() for m in match.group(1).split(',')]
+            return methods
+        else:
+            return [method_str.upper()]
+    
+    # Extract all methods from both features
+    methods1 = extract_methods(features1.method)
+    methods2 = extract_methods(features2.method)
+    all_methods = set(methods1 + methods2)
+    
+    # Check if we have descriptors to match
+    if features1.descriptors is None or features2.descriptors is None:
+        print(f"Warning: No descriptors available for matching ({features1.method} / {features2.method})")
+        print("Falling back to BFMatcher (will only work if descriptors become available)")
+        return EnhancedBFMatcher(norm_type=cv2.NORM_L2, **kwargs)
+    
+    # Check descriptor types
+    is_binary1 = features1.descriptors.dtype == np.uint8
+    is_binary2 = features2.descriptors.dtype == np.uint8
+    
+    # Binary descriptors (ORB, BRISK, AKAZE with MLDB)
+    binary_methods = {'ORB', 'BRISK', 'AKAZE'}
+    has_binary = bool(all_methods & binary_methods) or is_binary1 or is_binary2
+    
+    # Float descriptors (SIFT, SURF, SuperPoint, etc.)
+    float_methods = {'SIFT', 'SURF', 'SUPERPOINT', 'DISK', 'ALIKED'}
+    has_float = bool(all_methods & float_methods) or (not is_binary1 and not is_binary2)
+    
+    # If mixing binary and float, use method that can handle both (FLANN with appropriate params)
+    if has_binary and has_float:
+        print(f"Warning: Mixing binary and float descriptors in {all_methods}")
+        print("Using FLANN matcher - results may be suboptimal")
+        return EnhancedFLANNMatcher(**kwargs)
+    
+    # For binary descriptors only
+    if has_binary or is_binary1 or is_binary2:
+        print(f"Detected binary descriptors, using BFMatcher with HAMMING distance")
         return EnhancedBFMatcher(norm_type=cv2.NORM_HAMMING, **kwargs)
     
     # For deep learning features, prefer specific matchers if available
-    if any(method in ['SUPERPOINT', 'DISK', 'ALIKED', 'LIGHTGLUE'] for method in [method1, method2]):
+    deep_learning_methods = {'SUPERPOINT', 'DISK', 'ALIKED', 'LIGHTGLUE'}
+    if all_methods & deep_learning_methods:
         if TORCH_AVAILABLE:
             try:
+                print(f"Detected deep learning features, attempting LightGlue matcher")
                 return LightGlueMatcher(**kwargs)
-            except:
-                pass
+            except Exception as e:
+                print(f"LightGlue matcher unavailable: {e}, falling back to FLANN")
     
     # Default to FLANN for float descriptors
+    print(f"Using FLANN matcher for float descriptors")
     return EnhancedFLANNMatcher(**kwargs)
