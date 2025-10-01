@@ -205,16 +205,3 @@ We welcome contributions! Please:
 This project is released under the MIT License.
 
 ---
-
-## 📊 Citation
-
-If you use this project in research, please cite:
-
-```
-@software{tarboucha2025-feature-reconstruction,
-  author = {Tarboucha et al.},
-  title = {Multi-Method Feature Detection & 3D Reconstruction Pipeline},
-  year = {2025},
-  url = {https://github.com/your-org/3DReconstructionPipeline}
-}
-```
