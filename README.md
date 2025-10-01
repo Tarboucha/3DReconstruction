@@ -195,7 +195,6 @@ pytest tests/
 We welcome contributions! Please:
 
 * Fork the repo & create feature branches
-* Follow PEP8 guidelines
 * Add/extend tests (`pytest`)
 * Submit a pull request with a clear description
 
@@ -212,8 +211,8 @@ This project is released under the MIT License.
 If you use this project in research, please cite:
 
 ```
-@software{tarik2025-feature-reconstruction,
-  author = {Tarik et al.},
+@software{tarboucha2025-feature-reconstruction,
+  author = {Tarboucha et al.},
   title = {Multi-Method Feature Detection & 3D Reconstruction Pipeline},
   year = {2025},
   url = {https://github.com/your-org/3DReconstructionPipeline}
