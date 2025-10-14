@@ -15,28 +15,32 @@ from .core_data_structures import DetectorType
 # Default Configurations
 # =============================================================================
 
+
 DEFAULT_CONFIG = {
-    'methods': ['lightglue'],
+    'methods': ['SuperPoint'],  #  Changed from ['lightglue']
     'max_features': 2048,
     'combine_strategy': 'best',
     'detector_params': {
-        'lightglue': {
-                'features': 'superpoint',
-                'confidence_threshold': 0.2,
-                'max_num_keypoints': 2048,
-                'filter_threshold': 0.1
-            },
-            'SuperPoint': {
-                'keypoint_threshold': 0.005,
-                'nms_radius': 4
-            }
-        },
-        'filtering': {
-            'use_adaptive_filtering': True,
-            'ransac_threshold': 4.0,
-            'top_k': 500
+        'SuperPoint': {
+            'keypoint_threshold': 0.005,
+            'nms_radius': 4
         }
+    },
+    'matcher_config': {
+        'SuperPoint': 'lightglue'  #   NEW: Explicitly pair with LightGlue
+    },
+    'lightglue_configs': {
+        'SuperPoint': {
+            'confidence_threshold': 0.2,
+            'filter_threshold': 0.1
+        }
+    },
+    'filtering': {
+        'use_adaptive_filtering': True,
+        'ransac_threshold': 4.0,
+        'top_k': 500
     }
+}
 
 
 PRESET_CONFIGS = {
@@ -51,154 +55,68 @@ PRESET_CONFIGS = {
                 'edge_threshold': 31
             }
         },
-        'matcher_params': {
-            'norm_type': 'NORM_HAMMING',
-            'cross_check': True
-        },
-        'filtering': {
-            'use_adaptive_filtering': True,
-            'ransac_threshold': 8.0,
-            'top_k': 100
+        'matcher_config': {
+            'ORB': 'bf'  #   Explicit matcher
         }
     },
     
     'balanced': {
         'methods': ['SIFT', 'ORB'],
         'max_features': 2000,
-        'combine_strategy': 'best',
+        'combine_strategy': 'independent',
         'detector_params': {
-            'SIFT': {
-                'contrast_threshold': 0.04,
-                'edge_threshold': 10,
-                'sigma': 1.6
-            },
-            'ORB': {
-                'scale_factor': 1.2,
-                'n_levels': 8,
-                'edge_threshold': 31
-            }
+            'SIFT': {'contrast_threshold': 0.04},
+            'ORB': {'scale_factor': 1.2, 'n_levels': 8}
         },
-        'matcher_params': {
-            'ratio_threshold': 0.7
-        },
-        'filtering': {
-            'use_adaptive_filtering': True,
-            'ransac_threshold': 5.0,
-            'top_k': 200
+        'matcher_config': {
+            'SIFT': 'flann',
+            'ORB': 'bf'
         }
     },
     
     'accurate': {
         'methods': ['SIFT', 'AKAZE', 'BRISK'],
         'max_features': 3000,
-        'combine_strategy': 'weighted',
+        'combine_strategy': 'independent',
         'detector_params': {
-            'SIFT': {
-                'contrast_threshold': 0.03,
-                'edge_threshold': 8,
-                'sigma': 1.2
-            },
-            'AKAZE': {
-                'threshold': 0.0005,
-                'n_octaves': 4,
-                'descriptor_type': 'MLDB'
-            },
-            'BRISK': {
-                'threshold': 20,
-                'octaves': 4,
-                'pattern_scale': 1.0
-            }
+            'SIFT': {'contrast_threshold': 0.03},
+            'AKAZE': {'threshold': 0.0005},
+            'BRISK': {'threshold': 20}
         },
-        'matcher_params': {
-            'ratio_threshold': 0.65,
-            'algorithm': 'kdtree',
-            'trees': 5,
-            'checks': 100
-        },
-        'filtering': {
-            'use_adaptive_filtering': True,
-            'ransac_threshold': 3.0,
-            'confidence': 0.99,
-            'top_k': 300
+        'matcher_config': {
+            'SIFT': 'flann',
+            'AKAZE': 'bf',
+            'BRISK': 'bf'
         }
     },
     
     'deep_learning': {
-        'methods': ['lightglue'],
+        'methods': ['SuperPoint', 'DISK'],  #   Changed from ['lightglue']
         'max_features': 2048,
-        'combine_strategy': 'best',
+        'combine_strategy': 'independent',
         'detector_params': {
-            'lightglue': {
-                'features': 'superpoint',
-                'confidence_threshold': 0.2,
-                'max_num_keypoints': 2048,
-                'filter_threshold': 0.1
-            },
-            'SuperPoint': {
-                'keypoint_threshold': 0.005,
-                'nms_radius': 4
-            }
+            'SuperPoint': {'keypoint_threshold': 0.005},
+            'DISK': {}
         },
-        'filtering': {
-            'use_adaptive_filtering': True,
-            'ransac_threshold': 4.0,
-            'top_k': 500
+        'matcher_config': {
+            'SuperPoint': 'lightglue',  #   Explicit pairing
+            'DISK': 'lightglue'
         }
     },
     
     'robust': {
-        'methods': ['SIFT', 'AKAZE', 'lightglue'],
+        'methods': ['SIFT', 'AKAZE', 'SuperPoint'],  #   Changed
         'max_features': 2500,
-        'combine_strategy': 'weighted',
+        'combine_strategy': 'independent',
         'detector_params': {
-            'SIFT': {
-                'contrast_threshold': 0.035,
-                'edge_threshold': 8
-            },
-            'AKAZE': {
-                'threshold': 0.0008,
-                'n_octaves': 5
-            },
-            'lightglue': {
-                'confidence_threshold': 0.15,
-                'max_num_keypoints': 1500
-            }
+            'SIFT': {'contrast_threshold': 0.035},
+            'AKAZE': {'threshold': 0.0008},
+            'SuperPoint': {}
         },
-        'filtering': {
-            'use_adaptive_filtering': True,
-            'ransac_threshold': 4.0,
-            'confidence': 0.995,
-            'top_k': 400
-        },
-        'analysis': {
-            'compute_quality_metrics': True,
-            'benchmark_methods': True
-        }
-    },
-    
-    'debug': {
-        'methods': ['SIFT'],
-        'max_features': 500,
-        'combine_strategy': 'best',
-        'detector_params': {
-            'SIFT': {
-                'contrast_threshold': 0.04
-            }
-        },
-        'filtering': {
-            'use_adaptive_filtering': False,
-            'ransac_threshold': 10.0,
-            'top_k': 50
-        },
-        'visualization': {
-            'max_matches_display': 20,
-            'show_histogram': True,
-            'figsize': [12, 6]
-        },
-        'analysis': {
-            'compute_quality_metrics': True,
-            'save_detailed_results': True,
-            'benchmark_methods': False
+        'matcher_config': {
+            'SIFT': 'flann',
+            'AKAZE': 'bf',
+            'SuperPoint': 'lightglue'  #   Explicit pairing
         }
     }
 }
@@ -326,6 +244,12 @@ def merge_configs(base_config: Dict[str, Any], override_config: Dict[str, Any]) 
     
     return merged
 
+def validate_matcher_config(config: Dict[str, Any]) -> bool:
+    """Validate matcher configuration"""
+    for method, matcher in config.get('matcher_config', {}).items():
+        if method == 'lightglue':
+            raise ValueError("'lightglue' is not a valid detector. Use 'SuperPoint' with matcher='lightglue'")
+    return True
 
 def validate_config(config: Dict[str, Any]) -> Dict[str, List[str]]:
     """

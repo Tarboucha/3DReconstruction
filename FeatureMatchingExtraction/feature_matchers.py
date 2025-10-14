@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 import time
 from typing import List, Tuple, Optional, Dict, Union
+
+from pyparsing import Path
 from .base_classes import BaseFeatureMatcher, BasePairMatcher
 from .core_data_structures import FeatureData, MatchData, EnhancedDMatch, ScoreType
 
@@ -256,96 +258,167 @@ class LightGlueMatcher(BasePairMatcher):
     def __init__(self, features: str = 'superpoint', 
                  confidence_threshold: float = 0.2,
                  max_num_keypoints: int = 2048,
-                 filter_threshold: float = 0.1):
+                 filter_threshold: float = 0.1,
+                 weights_path: Optional[str] = None,  
+                 auto_download: bool = True):          
         """
-        Initialize LightGlue matcher
+        Initialize LightGlue matcher with support for custom weights
         
         Args:
-            features: Type of features to match ('superpoint', 'disk', 'aliked')
+            features: Type of features ('superpoint', 'disk', 'aliked')
             confidence_threshold: Minimum confidence for matches
             max_num_keypoints: Maximum number of keypoints to extract
             filter_threshold: Filtering threshold for matches
+            weights_path: Path to custom LightGlue weights (optional)
+            auto_download: Auto-download fine-tuned weights for DISK/ALIKED
         """
         if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch is required for LightGlue. Install with: pip install torch torchvision lightglue")
+            raise ImportError("PyTorch is required for LightGlue")
         
-        self.features = features
+        self.features = features.lower()
         self.confidence_threshold = confidence_threshold
         self.max_num_keypoints = max_num_keypoints
         self.filter_threshold = filter_threshold
+        self.weights_path = weights_path
+        self.auto_download = auto_download
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.matcher = None
         self.extractor = None
         self._load_model()
     
+    def _download_weights(self, url: str, filename: str) -> str:
+        """
+        Download LightGlue weights from URL
+        
+        Args:
+            url: Download URL
+            filename: Local filename to save
+            
+        Returns:
+            Path to downloaded weights
+        """
+        import urllib.request
+        from pathlib import Path
+        
+        # Create cache directory
+        cache_dir = Path.home() / '.cache' / 'lightglue_weights'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        weights_file = cache_dir / filename
+        
+        # Download if not exists
+        if not weights_file.exists():
+            print(f"ðŸ“¥ Downloading {self.features} LightGlue weights...")
+            print(f"   URL: {url}")
+            try:
+                urllib.request.urlretrieve(url, weights_file)
+                print(f"   âœ“ Saved to: {weights_file}")
+            except Exception as e:
+                print(f"   âœ— Download failed: {e}")
+                return None
+        else:
+            print(f"âœ“ Using cached weights: {weights_file}")
+        
+        return str(weights_file)
+
+
     def _load_model(self):
-        """Load LightGlue model and feature extractor"""
+        """Load LightGlue model with support for custom weights"""
         try:
-            # Try multiple import paths for LightGlue
+            # Try multiple import paths
             lightglue_module = None
             
-            # Method 1: Try importing from local LightGlue folder
             try:
                 from .LightGlue.lightglue import LightGlue, SuperPoint, DISK, ALIKED
                 lightglue_module = "local"
-                print("Using local LightGlue installation")
             except ImportError:
-                pass
-            
-            # Method 2: Try importing from globally installed lightglue
-            if lightglue_module is None:
                 try:
                     from lightglue import LightGlue, SuperPoint, DISK, ALIKED
                     lightglue_module = "global"
-                    print("Using global LightGlue installation")
                 except ImportError:
-                    pass
-            
-            # Method 3: Try alternative global import
-            if lightglue_module is None:
-                try:
-                    from lightglue.lightglue import LightGlue
-                    from lightglue.superpoint import SuperPoint
-                    from lightglue.disk import DISK
-                    from lightglue.aliked import ALIKED
-                    lightglue_module = "alternative"
-                    print("Using alternative LightGlue import")
-                except ImportError:
-                    pass
+                    try:
+                        from lightglue.lightglue import LightGlue
+                        from lightglue.superpoint import SuperPoint
+                        from lightglue.disk import DISK
+                        from lightglue.aliked import ALIKED
+                        lightglue_module = "alternative"
+                    except ImportError:
+                        pass
             
             if lightglue_module is None:
                 raise ImportError("Could not import LightGlue from any location")
             
-            # Initialize models based on features type
-            if self.features.lower() == 'superpoint':
-                self.extractor = SuperPoint(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
-                self.matcher = LightGlue(features='superpoint', filter_threshold=self.filter_threshold).eval().to(self.device)
-            elif self.features.lower() == 'disk':
-                self.extractor = DISK(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
-                self.matcher = LightGlue(features='disk', filter_threshold=self.filter_threshold).eval().to(self.device)
-            elif self.features.lower() == 'aliked':
-                self.extractor = ALIKED(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
-                self.matcher = LightGlue(features='aliked', filter_threshold=self.filter_threshold).eval().to(self.device)
-            else:
-                print(f"Feature type '{self.features}' not supported. Using SuperPoint.")
-                self.extractor = SuperPoint(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
-                self.matcher = LightGlue(features='superpoint', filter_threshold=self.filter_threshold).eval().to(self.device)
+            print(f"Using {lightglue_module} LightGlue installation")
             
-            print(f"LightGlue matcher with {self.features} loaded successfully ({lightglue_module})")
+            # âœ… NEW: Handle custom weights and fine-tuned models
+            matcher_weights = None
+            
+            # If custom weights provided, use them
+            if self.weights_path:
+                if Path(self.weights_path).exists():
+                    print(f"ðŸ”§ Using custom LightGlue weights: {self.weights_path}")
+                    matcher_weights = self.weights_path
+                else:
+                    print(f"âš ï¸ Custom weights not found: {self.weights_path}")
+            
+            # Auto-download fine-tuned weights for DISK/ALIKED
+            elif self.auto_download and self.features in ['disk', 'aliked']:
+                # Get URL from compatibility config if available
+                try:
+                    from .matcher_compatibility import MatcherCompatibilityManager
+                    compat_mgr = MatcherCompatibilityManager()
+                    matcher_info = compat_mgr.get_matcher_info('lightglue')
+                    
+                    if matcher_info and 'variants' in matcher_info:
+                        variant = matcher_info['variants'].get(self.features, {})
+                        weights_url = variant.get('default_weights_url')
+                        
+                        if weights_url:
+                            filename = f"lightglue_{self.features}.pth"
+                            matcher_weights = self._download_weights(weights_url, filename)
+                except Exception as e:
+                    print(f"âš ï¸ Could not auto-download weights: {e}")
+            
+            # Initialize feature extractor
+            if self.features == 'superpoint':
+                self.extractor = SuperPoint(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
+                # Default SuperPoint LightGlue
+                lg_config = {'features': 'superpoint', 'filter_threshold': self.filter_threshold}
+                
+            elif self.features == 'disk':
+                self.extractor = DISK(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
+                lg_config = {'features': 'disk', 'filter_threshold': self.filter_threshold}
+                
+            elif self.features == 'aliked':
+                self.extractor = ALIKED(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
+                lg_config = {'features': 'aliked', 'filter_threshold': self.filter_threshold}
+                
+            else:
+                print(f"âš ï¸ Unknown feature type '{self.features}', using SuperPoint")
+                self.extractor = SuperPoint(max_num_keypoints=self.max_num_keypoints).eval().to(self.device)
+                lg_config = {'features': 'superpoint', 'filter_threshold': self.filter_threshold}
+            
+            # Initialize matcher with optional custom weights
+            if matcher_weights:
+                lg_config['weights'] = matcher_weights
+            
+            self.matcher = LightGlue(**lg_config).eval().to(self.device)
+            
+            print(f"âœ“ LightGlue matcher loaded: {self.features}")
+            if matcher_weights:
+                print(f"  Using weights: {Path(matcher_weights).name}")
             
         except ImportError as e:
-            print(f"LightGlue not available. Error: {e}")
-            print("To install LightGlue:")
-            print("  pip install lightglue")
-            print("  OR: pip install git+https://github.com/cvg/LightGlue.git")
+            print(f"LightGlue not available: {e}")
             self.matcher = None
             self.extractor = None
         except Exception as e:
             print(f"Failed to load LightGlue: {e}")
+            import traceback
+            traceback.print_exc()
             self.matcher = None
             self.extractor = None
 
-            
     def _image_to_tensor(self, image: np.ndarray) -> torch.Tensor:
         """Convert image to tensor format expected by LightGlue"""
         if len(image.shape) == 3:

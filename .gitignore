@@ -4,7 +4,7 @@ obj/
 *.user
 *.suo
 *.cache
-*.plk
+*.pkl
 *.log
 *.tmp
 __pycache__/
@@ -13,4 +13,8 @@ __pycache__/
 /images
 /output
 FeatureMatchingExtraction/__pycache__/
-results/
+/test_output_v3
+/run_feature_pipeline.py
+/test_folder_benchmark.py
+/test_output
+/results

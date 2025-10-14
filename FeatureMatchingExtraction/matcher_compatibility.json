@@ -1,0 +1,268 @@
+{
+  "version": "2.0",
+  "description": "Feature detector and matcher compatibility configuration - LightGlue is now explicitly a matcher",
+  "changelog": {
+    "v2.0": "BREAKING: 'lightglue' is no longer a valid detector name. Use 'SuperPoint'/'DISK'/'ALIKED' with matcher_config={'method': 'lightglue'}"
+  },
+  
+  "detectors": {
+    "SIFT": {
+      "descriptor_type": "float",
+      "descriptor_size": 128,
+      "compatible_matchers": ["flann", "bf"],
+      "default_matcher": "flann",
+      "recommended_matcher": "flann",
+      "notes": "SIFT produces float descriptors, works best with FLANN"
+    },
+    "ORB": {
+      "descriptor_type": "binary",
+      "descriptor_size": 32,
+      "compatible_matchers": ["bf", "flann"],
+      "default_matcher": "bf",
+      "recommended_matcher": "bf",
+      "matcher_params": {
+        "bf": {"norm_type": "hamming"}
+      },
+      "notes": "ORB produces binary descriptors, use Hamming distance"
+    },
+    "AKAZE": {
+      "descriptor_type": "binary",
+      "descriptor_size": 61,
+      "compatible_matchers": ["bf", "flann"],
+      "default_matcher": "bf",
+      "recommended_matcher": "bf",
+      "matcher_params": {
+        "bf": {"norm_type": "hamming"}
+      },
+      "notes": "AKAZE produces binary descriptors"
+    },
+    "BRISK": {
+      "descriptor_type": "binary",
+      "descriptor_size": 64,
+      "compatible_matchers": ["bf", "flann"],
+      "default_matcher": "bf",
+      "recommended_matcher": "bf",
+      "matcher_params": {
+        "bf": {"norm_type": "hamming"}
+      },
+      "notes": "BRISK produces binary descriptors"
+    },
+    "SuperPoint": {
+      "descriptor_type": "float",
+      "descriptor_size": 256,
+      "compatible_matchers": ["lightglue", "flann", "bf"],
+      "default_matcher": "lightglue",
+      "recommended_matcher": "lightglue",
+      "requires_raw_image": false,
+      "matcher_params": {
+        "lightglue": {
+          "features": "superpoint",
+          "max_num_keypoints": 2048,
+          "confidence_threshold": 0.2,
+          "filter_threshold": 0.1,
+          "weights_path": null,
+          "auto_download": true,
+          "notes": "LightGlue with SuperPoint features - standard configuration"
+        },
+        "flann": {
+          "notes": "Alternative matcher for SuperPoint features"
+        }
+      },
+      "notes": "SuperPoint detector pairs best with LightGlue matcher"
+    },
+    "DISK": {
+      "descriptor_type": "float",
+      "descriptor_size": 128,
+      "compatible_matchers": ["lightglue", "flann", "bf"],
+      "default_matcher": "lightglue",
+      "recommended_matcher": "lightglue",
+      "requires_raw_image": false,
+      "matcher_params": {
+        "lightglue": {
+          "features": "disk",
+          "max_num_keypoints": 2048,
+          "confidence_threshold": 0.2,
+          "filter_threshold": 0.1,
+          "weights_path": null,
+          "auto_download": true,
+          "default_weights_url": "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/disk_lightglue.pth",
+          "notes": "LightGlue fine-tuned for DISK features"
+        },
+        "flann": {
+          "notes": "Alternative matcher, but LightGlue is strongly recommended"
+        }
+      },
+      "notes": "DISK detector designed to work with fine-tuned LightGlue matcher"
+    },
+    "ALIKED": {
+      "descriptor_type": "float",
+      "descriptor_size": 128,
+      "compatible_matchers": ["lightglue", "flann", "bf"],
+      "default_matcher": "lightglue",
+      "recommended_matcher": "lightglue",
+      "requires_raw_image": false,
+      "matcher_params": {
+        "lightglue": {
+          "features": "aliked",
+          "max_num_keypoints": 2048,
+          "confidence_threshold": 0.2,
+          "filter_threshold": 0.1,
+          "weights_path": null,
+          "auto_download": true,
+          "default_weights_url": "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/aliked_lightglue.pth",
+          "notes": "LightGlue fine-tuned for ALIKED features"
+        },
+        "flann": {
+          "notes": "Alternative matcher, but LightGlue is strongly recommended"
+        }
+      },
+      "notes": "ALIKED detector designed to work with fine-tuned LightGlue matcher"
+    },
+    "Harris": {
+      "descriptor_type": "none",
+      "descriptor_size": 0,
+      "compatible_matchers": [],
+      "default_matcher": null,
+      "notes": "Harris only detects corners, no descriptors. Typically paired with SIFT descriptors."
+    },
+    "GoodFeatures": {
+      "descriptor_type": "none",
+      "descriptor_size": 0,
+      "compatible_matchers": [],
+      "default_matcher": null,
+      "notes": "GoodFeaturesToTrack only detects corners, no descriptors. Typically paired with SIFT descriptors."
+    }
+  },
+  
+  "matchers": {
+    "flann": {
+      "type": "traditional",
+      "supports_descriptor_types": ["float"],
+      "performance": "fast",
+      "accuracy": "good",
+      "requires_raw_images": false,
+      "notes": "Fast approximate nearest neighbor search, best for float descriptors"
+    },
+    "bf": {
+      "type": "traditional",
+      "supports_descriptor_types": ["float", "binary"],
+      "performance": "medium",
+      "accuracy": "exact",
+      "requires_raw_images": false,
+      "notes": "Brute force matching, exact but slower. Supports both float and binary with appropriate norm"
+    },
+    "lightglue": {
+      "type": "deep_learning",
+      "supports_descriptor_types": ["float"],
+      "performance": "slow",
+      "accuracy": "excellent",
+      "requires": ["pytorch", "lightglue"],
+      "requires_raw_images": true,
+      "compatible_detectors": ["SuperPoint", "DISK", "ALIKED"],
+      "variants": {
+        "superpoint": {
+          "feature_extractor": "superpoint",
+          "detector_method": "SuperPoint",
+          "default_max_keypoints": 2048,
+          "default_weights_url": null,
+          "notes": "Standard LightGlue with SuperPoint - pre-trained weights"
+        },
+        "disk": {
+          "feature_extractor": "disk",
+          "detector_method": "DISK",
+          "default_max_keypoints": 2048,
+          "default_weights_url": "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/disk_lightglue.pth",
+          "notes": "LightGlue fine-tuned for DISK features"
+        },
+        "aliked": {
+          "feature_extractor": "aliked",
+          "detector_method": "ALIKED",
+          "default_max_keypoints": 2048,
+          "default_weights_url": "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/aliked_lightglue.pth",
+          "notes": "LightGlue fine-tuned for ALIKED features"
+        }
+      },
+      "notes": "Deep learning matcher that re-extracts features. Auto-selects variant based on detector. Requires raw images for feature extraction."
+    }
+  },
+  
+  "deprecated": {
+    "lightglue_as_detector": {
+      "deprecated_in": "v2.0",
+      "reason": "LightGlue is a matcher, not a detector",
+      "old_usage": "methods=['lightglue']",
+      "new_usage": "methods=['SuperPoint'], matcher_config={'SuperPoint': 'lightglue'}",
+      "migration_guide": "See docs/migration_lightglue_v2.md"
+    }
+  },
+  
+  "usage_examples": {
+    "standard_superpoint_lightglue": {
+      "description": "Standard SuperPoint detector with LightGlue matcher",
+      "config": {
+        "methods": ["SuperPoint"],
+        "matcher_config": {
+          "SuperPoint": "lightglue"
+        }
+      }
+    },
+    "disk_with_lightglue": {
+      "description": "DISK detector with fine-tuned LightGlue matcher",
+      "config": {
+        "methods": ["DISK"],
+        "matcher_config": {
+          "DISK": "lightglue"
+        }
+      }
+    },
+    "mixed_traditional_and_deep_learning": {
+      "description": "SIFT with FLANN, SuperPoint with LightGlue",
+      "config": {
+        "methods": ["SIFT", "SuperPoint"],
+        "matcher_config": {
+          "SIFT": "flann",
+          "SuperPoint": "lightglue"
+        }
+      }
+    },
+    "custom_lightglue_params": {
+      "description": "SuperPoint with custom LightGlue parameters",
+      "config": {
+        "methods": ["SuperPoint"],
+        "matcher_config": {
+          "SuperPoint": "lightglue"
+        },
+        "lightglue_configs": {
+          "SuperPoint": {
+            "confidence_threshold": 0.3,
+            "max_num_keypoints": 4096,
+            "filter_threshold": 0.05
+          }
+        }
+      }
+    }
+  },
+  
+  "compatibility_rules": {
+    "binary_descriptors_with_flann": {
+      "severity": "warning",
+      "message": "FLANN with binary descriptors may give suboptimal results. Consider using BF matcher instead."
+    },
+    "lightglue_requirements": {
+      "severity": "error",
+      "message": "LightGlue requires raw images. When using LightGlue matcher, ensure raw_image is stored in FeatureData."
+    },
+    "lightglue_detector_mismatch": {
+      "severity": "error",
+      "message": "LightGlue feature extractor must match the detector (e.g., DISK detector needs LightGlue with DISK features)"
+    },
+    "incompatible_norm_type": {
+      "severity": "error",
+      "message": "Descriptor type and matcher norm type are incompatible"
+    },
+    "lightglue_as_method_name": {
+      "severity": "error",
+      "message": "'lightglue' is not a valid detector name. Use 'SuperPoint', 'DISK', or 'ALIKED' with matcher_config={'method': 'lightglue'}"
+    }
+  }
+}
