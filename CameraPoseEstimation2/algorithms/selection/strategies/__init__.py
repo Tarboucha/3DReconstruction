@@ -96,3 +96,109 @@ from .pair_selection.scoring import (
     score_camera_connectivity,
     validate_pair_quality
 )
+
+
+__all__ = [
+    # Base classes
+    'BaseSelector',
+    'SelectionResult',
+    'SelectionMode',
+    'CompositeScore',
+    'ScoreComponent',
+    
+    # Pair selection
+    'InitializationPairSelector',
+    'PairSelectionConfig',
+    
+    # Scoring
+    'PairScorer',
+    'PairQualityMetrics',
+    'score_camera_connectivity',
+    'validate_pair_quality',
+]
+
+__version__ = '1.0.0'
+
+
+# ============================================================================
+# algorithms/selection/strategies/__init__.py
+# ============================================================================
+
+"""
+Selection Strategies
+
+Base classes and interfaces for all selection strategies.
+"""
+
+from .base_selector import (
+    BaseSelector,
+    SelectionResult,
+    SelectionMode,
+    CompositeScore,
+    ScoreComponent,
+    normalize_score,
+    apply_threshold
+)
+
+
+__all__ = [
+    'BaseSelector',
+    'SelectionResult',
+    'SelectionMode',
+    'CompositeScore',
+    'ScoreComponent',
+    'normalize_score',
+    'apply_threshold',
+]
+
+
+# ============================================================================
+# algorithms/selection/pair_selection/__init__.py
+# ============================================================================
+
+"""
+Pair Selection Module
+
+Strategies for selecting image pairs for reconstruction initialization
+and incremental view addition.
+"""
+
+# Note: The actual InitializationPairSelector implementation exists in
+# algorithms/selection/pair_selection/initialization.py
+# We just re-export it here for convenience
+
+# Import will work once initialization.py is refactored
+# For now, this provides the module structure
+
+try:
+    from .initialization import (
+        InitializationPairSelector,
+        PairSelectionConfig
+    )
+except ImportError:
+    # Fallback if old structure
+    print("Warning: Using legacy pair selector")
+    from CameraPoseEstimation2.algorithms.selection.pair_selection.initialization import (
+        InitializationPairSelector
+    )
+    
+    class PairSelectionConfig:
+        """Placeholder config"""
+        pass
+
+from .scoring import (
+    PairScorer,
+    PairQualityMetrics,
+    score_camera_connectivity,
+    validate_pair_quality
+)
+
+
+__all__ = [
+    'InitializationPairSelector',
+    'PairSelectionConfig',
+    'PairScorer',
+    'PairQualityMetrics',
+    'score_camera_connectivity',
+    'validate_pair_quality',
+]
