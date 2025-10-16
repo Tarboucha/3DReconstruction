@@ -5,8 +5,8 @@ from typing import Dict, Tuple, List, Optional, Set
 from dataclasses import dataclass
 from pathlib import Path
 from enum import Enum
-from core.interfaces import IMatchDataProvider
-from core.structures import StructuredMatchData
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider
+from CameraPoseEstimation2.core.structures import StructuredMatchData
 
 class ScoreType(Enum):
     """Enumeration of score types"""

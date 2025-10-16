@@ -14,7 +14,7 @@ import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 import time
 
-from core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
+from CameraPoseEstimation2.core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
 from .pose_refiner import PoseRefiner
 from .intrinsics_refiner import ProgressiveIntrinsicsLearner
 from .structure_refiner import StructureRefiner

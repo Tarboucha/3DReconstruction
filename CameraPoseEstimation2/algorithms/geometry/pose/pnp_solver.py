@@ -13,7 +13,7 @@ import cv2
 from typing import Dict, List, Optional, Tuple, Any
 import warnings
 
-from .estimator import PoseEstimator, PoseEstimatorConfig
+from .pose_estimator import PoseEstimator, PoseEstimatorConfig
 from .validators import PoseValidator, validate_correspondences
 
 

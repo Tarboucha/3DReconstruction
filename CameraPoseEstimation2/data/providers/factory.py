@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import pickle
 
-from .base_provider import IMatchDataProvider
-from .structured_provider import StructuredDataProvider
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider
+from .structured_provider import StructuredMatchDataProvider
 
 
 class ProviderFactory:
@@ -43,7 +43,7 @@ class ProviderFactory:
         if path_obj.is_dir():
             if ProviderFactory._is_structured_format(path_obj):
                 print("  → Detected: FeatureMatchingExtraction batch format")
-                return StructuredDataProvider(path, **kwargs)
+                return StructuredMatchDataProvider(path, **kwargs)
             
             # Add more format checks here as needed
             # elif ProviderFactory._is_legacy_format(path_obj):

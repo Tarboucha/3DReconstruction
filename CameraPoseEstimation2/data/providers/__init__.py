@@ -27,7 +27,7 @@ Usage:
 """
 
 # Import interface from core
-from core.interfaces import IMatchDataProvider, ValidationResult
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider, ValidationResult
 
 # Import provider implementations
 from .structured_provider import StructuredMatchDataProvider

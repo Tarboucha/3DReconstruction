@@ -155,6 +155,10 @@ from .refinement import (
     IntrinsicsEstimate,
     StructureQualityMetrics,
     
+
+    EssentialMatrixRefiner,
+    EssentialMatrixRefinerConfig,
+
     # Convenience functions
     refine_camera_pose
 )
@@ -198,7 +202,10 @@ __all__ = [
     # Refinement Data Classes
     'IntrinsicsEstimate',
     'StructureQualityMetrics',
-    
+
+    'EssentialMatrixRefiner',
+    'EssentialMatrixRefinerConfig',
+
     # Refinement Functions
     'refine_camera_pose',
 ]

@@ -31,7 +31,7 @@ Usage:
 """
 
 # Re-export commonly used classes for convenience
-from core.interfaces import IMatchDataProvider, ValidationResult
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider, ValidationResult
 
 # Providers
 from .providers import (

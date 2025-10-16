@@ -13,7 +13,7 @@ import cv2
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from core.structures import (
+from CameraPoseEstimation2.core.structures import (
     StructuredMatchData,
     EnhancedDMatch,
     ScoreType,

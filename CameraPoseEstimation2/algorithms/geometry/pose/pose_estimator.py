@@ -21,7 +21,7 @@ import numpy as np
 from typing import Dict, Tuple, Optional, List, Any
 from enum import Enum
 
-from core.interfaces.base_estimator import RANSACEstimator, EstimationResult, EstimationStatus
+from CameraPoseEstimation2.core.interfaces.base_estimator import RANSACEstimator, EstimationResult, EstimationStatus
 
 
 class PnPMethod(Enum):

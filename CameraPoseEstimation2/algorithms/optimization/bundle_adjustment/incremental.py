@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any
 from scipy.optimize import least_squares
 import time
 
-from core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
+from CameraPoseEstimation2.core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
 from .cost_functions import BACostFunction, ParameterBuilder, compute_mean_reprojection_error
 
 

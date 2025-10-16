@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 import logging
 from dataclasses import dataclass
 
-from core.interfaces import IMatchDataProvider
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider
 
 
 class TriangulationEngine:

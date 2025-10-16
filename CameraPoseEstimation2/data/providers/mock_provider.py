@@ -9,8 +9,8 @@ import cv2
 from typing import Dict, List, Tuple, Optional, Callable
 from itertools import combinations
 
-from core.interfaces import IMatchDataProvider, ValidationResult
-from core.structures import StructuredMatchData, EnhancedDMatch, ScoreType
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider, ValidationResult
+from CameraPoseEstimation2.core.structures import StructuredMatchData, EnhancedDMatch, ScoreType
 
 
 class MockProvider(IMatchDataProvider):

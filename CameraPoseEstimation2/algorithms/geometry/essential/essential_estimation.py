@@ -3,7 +3,7 @@ import numpy as np
 from typing import Tuple, Dict, Optional
 import warnings
 
-from core.interfaces.base_estimator import BaseEstimator
+from CameraPoseEstimation2.core.interfaces.base_estimator import BaseEstimator
 
 class MatrixEstimationConfig:
     """Configuration for essential matrix estimation optimized for monuments"""

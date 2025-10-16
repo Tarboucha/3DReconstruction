@@ -17,7 +17,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 import warnings
 
-from core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
+from CameraPoseEstimation2.core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
 
 
 @dataclass

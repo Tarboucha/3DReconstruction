@@ -12,8 +12,8 @@ from collections import OrderedDict
 import numpy as np
 import cv2
 
-from core.interfaces import IMatchDataProvider, ValidationResult
-from core.structures import StructuredMatchData, EnhancedDMatch, ScoreType
+from CameraPoseEstimation2.core.interfaces import IMatchDataProvider, ValidationResult
+from CameraPoseEstimation2.core.structures import StructuredMatchData, EnhancedDMatch, ScoreType
 
 
 class LRUCache:
@@ -45,7 +45,7 @@ class LRUCache:
         return len(self.cache)
 
 
-class StructuredDataProvider(IMatchDataProvider):
+class StructuredMatchDataProvider(IMatchDataProvider):
     """
     Provider for loading match data from FeatureMatchingExtraction batch files.
     

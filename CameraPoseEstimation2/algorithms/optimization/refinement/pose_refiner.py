@@ -19,7 +19,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from scipy.optimize import least_squares
 import time
 
-from core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
+from CameraPoseEstimation2.core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
 
 
 class PoseRefinerConfig:

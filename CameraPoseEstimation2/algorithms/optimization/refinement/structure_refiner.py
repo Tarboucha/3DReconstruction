@@ -15,7 +15,7 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 from dataclasses import dataclass
 import cv2
 
-from core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
+from CameraPoseEstimation2.core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
 
 
 @dataclass

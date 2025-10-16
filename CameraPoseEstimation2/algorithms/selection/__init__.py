@@ -83,16 +83,16 @@ from .strategies import (
     ScoreComponent
 )
 
-# Pair selection
-from .pair_selection import (
-    InitializationPairSelector,
-    PairSelectionConfig
-)
-
 # Scoring utilities
 from .pair_selection.scoring import (
     PairScorer,
     PairQualityMetrics,
     score_camera_connectivity,
     validate_pair_quality
+)
+
+
+from .pair_selection import (
+    InitializationPairSelector,
+    PairSelectionConfig
 )

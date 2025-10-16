@@ -10,7 +10,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from scipy.optimize import least_squares
 import warnings
 
-from core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
+from CameraPoseEstimation2.core.interfaces.base_optimizer import BaseOptimizer, OptimizationResult, OptimizationStatus
 from .cost_functions import BACostFunction, ParameterBuilder, compute_mean_reprojection_error
 
 
