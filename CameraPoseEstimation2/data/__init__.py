@@ -37,6 +37,8 @@ from CameraPoseEstimation2.core.interfaces import IMatchDataProvider, Validation
 from .providers import (
     StructuredMatchDataProvider,
     MockProvider,
+    FolderMatchDataProvider,
+    is_folder_format,
     create_provider,
     ProviderFactory,
 )
@@ -56,7 +58,9 @@ __all__ = [
     'StructuredMatchDataProvider',
     'MockProvider',
     'create_provider',
-    'ProviderFactory',
+    'FolderMatchDataProvider',
+    'ProviderFactory',    
+    'is_folder_format', 
     
     # Loaders
     'MatchQualityStandardizer',

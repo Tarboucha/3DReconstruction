@@ -7,7 +7,7 @@ only recent cameras while refining all 3D points.
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from scipy.optimize import least_squares
 import time
 
@@ -78,6 +78,23 @@ class IncrementalBundleAdjustment(BaseOptimizer):
             loss_threshold=self.config.ROBUST_LOSS_THRESHOLD
         )
     
+    # Add to CameraPoseEstimation2/algorithms/optimization/bundle_adjustment/two_view.py
+
+    def validate_input(self, cameras, points_3d, observations, **kwargs) -> Tuple[bool, str]:
+        """Validate input for bundle adjustment"""
+        if len(cameras) < 2:
+            return False, f"Need at least 2 cameras, got {len(cameras)}"
+        if points_3d.shape[1] < 4:
+            return False, f"Need at least 4 points, got {points_3d.shape[1]}"
+        if len(observations) < 4:
+            return False, f"Need at least 4 observations, got {len(observations)}"
+        return True, ""
+
+    def compute_residuals(self, params: np.ndarray, param_structure: Dict, 
+                        observations: List[Dict], cameras_dict: Dict) -> np.ndarray:
+        """Compute residuals (delegates to cost function)"""
+        return self._compute_residuals(params, param_structure, observations, cameras_dict)
+
     def get_algorithm_name(self) -> str:
         """Get algorithm name."""
         return "IncrementalBundleAdjustment"

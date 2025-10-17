@@ -92,6 +92,23 @@ class StructureRefiner(BaseOptimizer):
             if hasattr(self.config, key.upper()):
                 setattr(self.config, key.upper(), value)
     
+# Add to CameraPoseEstimation2/algorithms/optimization/refinement/structure_refiner.py
+
+    def validate_input(self, points_3d: np.ndarray, observations: List[Dict], 
+                    cameras: Dict, **kwargs) -> Tuple[bool, str]:
+        """Validate input for structure refinement"""
+        if points_3d.shape[1] < 4:
+            return False, f"Need at least 4 points, got {points_3d.shape[1]}"
+        if len(observations) < 8:
+            return False, f"Need at least 8 observations, got {len(observations)}"
+        if len(cameras) < 2:
+            return False, f"Need at least 2 cameras, got {len(cameras)}"
+        return True, ""
+
+    def compute_residuals(self, params: np.ndarray, *args, **kwargs) -> np.ndarray:
+        """Compute residuals - placeholder for abstract method"""
+        return np.array([])
+
     def get_algorithm_name(self) -> str:
         """Get algorithm name."""
         return "StructureRefiner"

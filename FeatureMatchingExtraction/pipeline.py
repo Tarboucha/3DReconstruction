@@ -328,7 +328,7 @@ class FeatureProcessingPipeline:
         self,
         folder_path: str,
         pattern: str = '*.jpg',
-        pair_mode: str = 'consecutive',
+        pair_mode: str = 'all',
         resize_to: Optional[Tuple[int, int]] = None,
         
         # Batch Processing Parameters

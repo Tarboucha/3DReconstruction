@@ -52,6 +52,9 @@ class StructuredMatchData:
     
     # Timing
     matching_time: float = 0.0
+
+    image1_size: Optional[Tuple[int, int]] = None
+    image2_size: Optional[Tuple[int, int]] = None
     
     # =========================================================================
     # Backward Compatibility Properties
@@ -59,25 +62,29 @@ class StructuredMatchData:
     
     @property
     def correspondences(self) -> np.ndarray:
-        """
-        Get correspondences as [x1, y1, x2, y2] array.
+        """Get correspondences as (N, 4) array of [x1, y1, x2, y2]"""
+        if len(self.matches) == 0:
+            return np.empty((0, 4), dtype=np.float32)
         
-        This provides backward compatibility with code expecting
-        simple correspondence arrays.
-        
-        Returns:
-            Array of shape (N, 4) where each row is [x1, y1, x2, y2]
-        """
-        if not self.matches:
-            return np.array([]).reshape(0, 4)
-        
-        corr = []
+        corr_list = []
         for match in self.matches:
-            pt1 = self.keypoints1[match.queryIdx].pt
-            pt2 = self.keypoints2[match.trainIdx].pt
-            corr.append([pt1[0], pt1[1], pt2[0], pt2[1]])
-        
-        return np.array(corr, dtype=np.float32)
+            idx1 = match.queryIdx
+            idx2 = match.trainIdx
+            
+            # Handle both numpy arrays and KeyPoint lists
+            if isinstance(self.keypoints1, np.ndarray):
+                pt1 = self.keypoints1[idx1]
+            else:
+                pt1 = self.keypoints1[idx1].pt if hasattr(self.keypoints1[idx1], 'pt') else self.keypoints1[idx1]
+            
+            if isinstance(self.keypoints2, np.ndarray):
+                pt2 = self.keypoints2[idx2]
+            else:
+                pt2 = self.keypoints2[idx2].pt if hasattr(self.keypoints2[idx2], 'pt') else self.keypoints2[idx2]
+            
+            corr_list.append([pt1[0], pt1[1], pt2[0], pt2[1]])
+    
+        return np.array(corr_list, dtype=np.float32)
     
     @property
     def pts1(self) -> np.ndarray:
@@ -134,6 +141,24 @@ class StructuredMatchData:
         
         return np.array(qualities, dtype=np.float32)
     
+    def __getitem__(self, key):
+        """Support dictionary-style access: data['correspondences']"""
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(f"'{key}' not found in StructuredMatchData")
+
+    def __contains__(self, key):
+        """Support 'in' operator: 'correspondences' in data"""
+        return hasattr(self, key)
+
+    def get(self, key, default=None):
+        """Dict-style get with default"""
+        return getattr(self, key, default)
+
+    def keys(self):
+        """Return available attributes"""
+        return [k for k in dir(self) if not k.startswith('_')]
+
     # =========================================================================
     # Filtering and Manipulation
     # =========================================================================

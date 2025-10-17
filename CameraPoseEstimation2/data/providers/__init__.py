@@ -33,7 +33,7 @@ from CameraPoseEstimation2.core.interfaces import IMatchDataProvider, Validation
 from .structured_provider import StructuredMatchDataProvider
 from .mock_provider import MockProvider
 from .factory import create_provider, ProviderFactory
-
+from .folder_provider import FolderMatchDataProvider, is_folder_format
 
 __all__ = [
     # Interface (re-export for convenience)
@@ -43,10 +43,12 @@ __all__ = [
     # Provider implementations
     'StructuredMatchDataProvider',
     'MockProvider',
+    'FolderMatchDataProvider',
     
     # Factory
     'create_provider',
     'ProviderFactory',
+    'is_folder_format',
 ]
 
 

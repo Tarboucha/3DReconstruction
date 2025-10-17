@@ -102,6 +102,24 @@ class ProgressiveIntrinsicsLearner(BaseOptimizer):
         self.intrinsics_history: Dict[str, List[IntrinsicsEstimate]] = {}
         self.current_intrinsics: Dict[str, IntrinsicsEstimate] = {}
     
+    # Add to CameraPoseEstimation2/algorithms/optimization/refinement/intrinsics_refiner.py
+
+    def validate_input(self, cameras: Dict, points_3d: np.ndarray, 
+                    observations: List[Dict], **kwargs) -> Tuple[bool, str]:
+        """Validate input for intrinsics learning"""
+        if len(cameras) < 2:
+            return False, f"Need at least 2 cameras, got {len(cameras)}"
+        if points_3d.shape[1] < 10:
+            return False, f"Need at least 10 points for intrinsics, got {points_3d.shape[1]}"
+        if len(observations) < 20:
+            return False, f"Need at least 20 observations, got {len(observations)}"
+        return True, ""
+
+    def compute_residuals(self, params: np.ndarray, *args, **kwargs) -> np.ndarray:
+        """Compute residuals - placeholder for abstract method"""
+        # This class uses internal optimization, residuals computed internally
+        return np.array([])
+
     def get_algorithm_name(self) -> str:
         """Get algorithm name."""
         return "ProgressiveIntrinsicsLearner"

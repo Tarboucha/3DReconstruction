@@ -106,6 +106,8 @@ class StructuredMatchDataProvider(IMatchDataProvider):
         if min_matches:
             print(f"  Match count filter: ≥{min_matches}")
     
+
+
     def _build_index(self):
         """Build index of pairs to files without loading all data"""
         print(f"Building index from: {self.results_dir}")

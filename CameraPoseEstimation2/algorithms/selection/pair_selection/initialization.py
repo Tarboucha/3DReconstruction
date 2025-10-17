@@ -222,8 +222,9 @@ class InitializationPairSelector:
             if len(correspondences) < min_matches:
                 continue
             
+            #test=pair_data['image1_size']
             # Score this pair
-            score_result = self.score_image_pair(pair_key, pair_data, existing_cameras)
+            score_result = self.score_image_pair(pair_key, pair_data, pair_data['image1_size'], pair_data['image2_size'])
             
             # Quality filtering
             min_inlier_ratio = (self.config.min_inlier_ratio * 0.8 if is_incremental 
@@ -820,7 +821,7 @@ class InitializationPairSelector:
         # Get score type and raw scores
         score_type_str = pair_data.get('score_type', 'distance')
         try:
-            score_type = ScoreType(score_type_str)
+            score_type = score_type_str if isinstance(score_type_str, ScoreType) else ScoreType(score_type_str)
         except ValueError:
             print(f"Warning: Unknown score type '{score_type_str}', defaulting to 'distance'")
             score_type = ScoreType.DISTANCE

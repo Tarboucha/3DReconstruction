@@ -11,6 +11,7 @@ import pickle
 
 from CameraPoseEstimation2.core.interfaces import IMatchDataProvider
 from .structured_provider import StructuredMatchDataProvider
+from .folder_provider import FolderMatchDataProvider, is_folder_format
 
 
 class ProviderFactory:
@@ -20,48 +21,23 @@ class ProviderFactory:
     Automatically detects data format and creates the right provider.
     """
     
+   
     @staticmethod
     def auto_detect(path: str, **kwargs) -> IMatchDataProvider:
-        """
-        Automatically detect format and create appropriate provider.
-        
-        Args:
-            path: Path to data (directory or file)
-            **kwargs: Additional arguments to pass to provider
-            
-        Returns:
-            Appropriate IMatchDataProvider implementation
-            
-        Raises:
-            ValueError: If format cannot be detected
-        """
         path_obj = Path(path)
         
         print(f"Auto-detecting data format at: {path}")
         
-        # Check if it's a directory with batch files (FeatureMatchingExtraction format)
         if path_obj.is_dir():
+            # Check folder format FIRST (before structured)
+            if is_folder_format(path_obj):
+                print("  → Detected: Folder format (pairs/ + metadata)")
+                return FolderMatchDataProvider(path, **kwargs)
+            
+            # Then check structured format
             if ProviderFactory._is_structured_format(path_obj):
                 print("  → Detected: FeatureMatchingExtraction batch format")
                 return StructuredMatchDataProvider(path, **kwargs)
-            
-            # Add more format checks here as needed
-            # elif ProviderFactory._is_legacy_format(path_obj):
-            #     return LegacyDataProvider(path, **kwargs)
-        
-        # Check if it's a single file
-        elif path_obj.is_file():
-            if ProviderFactory._is_legacy_pickle(path_obj):
-                print("  → Detected: Legacy pickle format")
-                # return LegacyDataProvider(path, **kwargs)
-                raise NotImplementedError("Legacy format not yet implemented")
-        
-        raise ValueError(
-            f"Could not detect data format at: {path}\n"
-            f"Expected:\n"
-            f"  - Directory with *_batch_*.pkl and *_image_metadata.pkl files\n"
-            f"  - Legacy pickle file (not yet implemented)"
-        )
     
     @staticmethod
     def _is_structured_format(path: Path) -> bool:

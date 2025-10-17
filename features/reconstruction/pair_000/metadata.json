@@ -1,0 +1,12 @@
+{
+  "methods": [
+    "SIFT",
+    "ORB"
+  ],
+  "best_method": "SIFT",
+  "num_methods": 2,
+  "image_pair": {
+    "image1": "Image_10.jpg",
+    "image2": "Image_3.jpg"
+  }
+}

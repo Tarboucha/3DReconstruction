@@ -454,7 +454,7 @@ class IncrementalReconstructionPipeline:
     def _select_and_prepare_initial_pair(self) -> Tuple:
         """Select and prepare initial image pair"""
         # Select best pair
-        pair_result = self.pair_selector.select_best_pair(self.provider)
+        pair_result = self.pair_selector.find_best_pair(self.provider)
         
         if not pair_result.success:
             raise RuntimeError(f"Failed to select initial pair: {pair_result.message}")

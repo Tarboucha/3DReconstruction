@@ -75,6 +75,27 @@ class PoseRefiner(BaseOptimizer):
             if hasattr(self.config, key.upper()):
                 setattr(self.config, key.upper(), value)
     
+
+    def validate_input(self, camera_id: str, R_init: np.ndarray, t_init: np.ndarray, 
+                    K: np.ndarray, points_3d: np.ndarray, points_2d: np.ndarray, 
+                    **kwargs) -> Tuple[bool, str]:
+        """Validate input for pose refinement"""
+        if points_3d.shape[0] < 4:
+            return False, f"Need at least 4 points, got {points_3d.shape[0]}"
+        if points_3d.shape[0] != points_2d.shape[0]:
+            return False, "Mismatch between 3D and 2D points"
+        if R_init.shape != (3, 3):
+            return False, f"Invalid rotation matrix shape: {R_init.shape}"
+        if K.shape != (3, 3):
+            return False, f"Invalid camera matrix shape: {K.shape}"
+        return True, ""
+
+    def compute_residuals(self, params: np.ndarray, points_3d: np.ndarray, 
+                        points_2d: np.ndarray, K: np.ndarray, 
+                        optimize_intrinsics: bool) -> np.ndarray:
+        """Compute residuals (delegates to internal method)"""
+        return self._compute_residuals(params, points_3d, points_2d, K, optimize_intrinsics)
+
     def get_algorithm_name(self) -> str:
         """Get algorithm name."""
         return "PoseRefiner"

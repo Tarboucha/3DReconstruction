@@ -31,6 +31,30 @@ class EssentialMatrixEstimator(BaseEstimator):
         self.threshold = threshold
         self.config = MatrixEstimationConfig()
     
+
+    def validate_input(self, pts1: np.ndarray, pts2: np.ndarray, 
+                   image_size: Tuple[int, int], method: str = 'RANSAC') -> Tuple[bool, str]:
+        """Validate input for essential matrix estimation"""
+        if pts1.shape[0] < 5:
+            return False, f"Need at least 5 points, got {pts1.shape[0]}"
+        if pts1.shape != pts2.shape:
+            return False, "Point arrays must have same shape"
+        if pts1.shape[1] != 2:
+            return False, "Points must be 2D (Nx2)"
+        return True, ""
+
+    def validate_result(self, result) -> bool:
+        """Validate estimation result"""
+        if not result.success:
+            return False
+        if 'E' not in result.data or result.data['E'] is None:
+            return False
+        E = result.data['E']
+        if E.shape != (3, 3):
+            return False
+        return True
+
+
     def estimate_camera_matrix(self, image_size: Tuple[int, int], 
                              focal_ratio: float = None) -> np.ndarray:
         """
