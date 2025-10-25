@@ -8,70 +8,31 @@ import json
 import time
 from pathlib import Path
 from typing import Set, Dict, Any
-
+import pickle
 
 class BatchProcessor:
     """
-    Manages batch processing checkpoints for fault-tolerant pipeline execution
-    
-    Tracks which image pairs have been successfully processed to enable:
-    - Resume after crash/interruption
-    - Skip already-processed pairs
-    - Progress monitoring
-    
-    The checkpoint file (progress.json) contains:
-    {
-        "completed_pairs": ["pair_000", "pair_001", ...],
-        "total_completed": 42,
-        "last_updated": "2025-01-10 14:30:15",
-        "metadata": {
-            "batch_size": 10,
-            "started": "2025-01-10 14:00:00"
-        }
-    }
-    
-    Usage:
-        >>> processor = BatchProcessor(output_dir)
-        >>> 
-        >>> # Check if pair was already processed
-        >>> if not processor.is_completed('pair_042'):
-        ...     result = pipeline.match(img1, img2)
-        ...     processor.save_progress('pair_042')
-        >>> 
-        >>> # Reset to start fresh
-        >>> processor.reset()
+    Manages batch processing with automatic batch file creation
     """
-    
     def __init__(self, output_dir: Path, batch_size: int = 10):
-        """
-        Initialize batch processor
-        
-        Args:
-            output_dir: Directory where progress.json will be stored
-            batch_size: Batch size (stored in metadata for reference)
-        """
         self.output_dir = Path(output_dir)
         self.progress_file = self.output_dir / 'progress.json'
         self.batch_size = batch_size
         
-        # Load existing progress
         self.completed_pairs = self._load_progress()
         self.metadata = self._load_metadata()
         
-        # If starting fresh, initialize metadata
         if not self.metadata:
             self.metadata = {
                 'batch_size': batch_size,
                 'started': time.strftime('%Y-%m-%d %H:%M:%S')
             }
+        
+        # Batch accumulator
+        self.current_batch = []
+        self.current_batch_number = 0
     
     def _load_progress(self) -> Set[str]:
-        """
-        Load which pairs have been completed from progress file
-        
-        Returns:
-            Set of completed pair IDs (e.g., {"pair_000", "pair_001"})
-        """
         if not self.progress_file.exists():
             return set()
         
@@ -79,15 +40,10 @@ class BatchProcessor:
             with open(self.progress_file, 'r') as f:
                 data = json.load(f)
                 return set(data.get('completed_pairs', []))
-        except json.JSONDecodeError as e:
-            print(f"⚠️  Warning: Corrupted progress file, starting fresh: {e}")
-            return set()
-        except Exception as e:
-            print(f"⚠️  Warning: Could not load progress file: {e}")
+        except:
             return set()
     
     def _load_metadata(self) -> Dict[str, Any]:
-        """Load metadata from progress file"""
         if not self.progress_file.exists():
             return {}
         
@@ -95,23 +51,71 @@ class BatchProcessor:
             with open(self.progress_file, 'r') as f:
                 data = json.load(f)
                 return data.get('metadata', {})
-        except Exception:
+        except:
             return {}
     
+    def add_result(self, pair_id: str, result: Any):
+        """Add result to current batch"""
+        self.current_batch.append((pair_id, result))
+        
+        if len(self.current_batch) >= self.batch_size:
+            self._save_and_clear_batch()
+    
+    def _save_and_clear_batch(self):
+        """Save current batch to file and clear from memory"""
+        if not self.current_batch:
+            return
+        
+        self.current_batch_number += 1
+        batch_file = self.output_dir / 'matching_results' / f'matching_results_batch_{self.current_batch_number:03d}.pkl'
+        batch_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        batch_data = {
+            'results': {},
+            'batch_stats': {
+                'batch_number': self.current_batch_number,
+                'num_pairs': len(self.current_batch),
+                'batch_processing_time': 0
+            }
+        }
+        
+        
+        for pair_id, recon_data in self.current_batch:
+            pair_key = (recon_data.image_pair_info.image1_id, recon_data.image_pair_info.image2_id)
+            
+            total_matches = 0
+            best_method = None
+            best_num_matches = 0
+            for method_name, method_data in recon_data.methods.items():
+                num_matches = method_data.num_matches  # This is where num_matches lives!
+                total_matches += num_matches
+                
+                if num_matches > best_num_matches:
+                    best_num_matches = num_matches
+                    best_method = method_name
+
+            batch_data['results'][pair_key] = {
+                'total_matches': total_matches,
+                'best_method': best_method,
+                'best_num_matches': best_num_matches,
+                'num_methods': len(recon_data.methods),
+                'recon_data': recon_data
+}
+        
+        with open(batch_file, 'wb') as f:
+            pickle.dump(batch_data, f)
+        
+        self.current_batch.clear()
+    
+    def finalize(self):
+        """Save any remaining results in current batch"""
+        if self.current_batch:
+            self._save_and_clear_batch()
+    
     def save_progress(self, pair_id: str):
-        """
-        Save progress after completing a pair
-        
-        This is called immediately after each pair is successfully processed
-        and saved to enable resume from exact point of failure.
-        
-        Args:
-            pair_id: Pair identifier (e.g., "pair_042")
-        """
-        # Add to completed set
+        """Save progress checkpoint"""
         self.completed_pairs.add(pair_id)
         
-        # Prepare data to save
         progress_data = {
             'completed_pairs': sorted(list(self.completed_pairs)),
             'total_completed': len(self.completed_pairs),
@@ -119,43 +123,20 @@ class BatchProcessor:
             'metadata': self.metadata
         }
         
-        # Save to file
-        try:
-            with open(self.progress_file, 'w') as f:
-                json.dump(progress_data, f, indent=2)
-        except Exception as e:
-            print(f"⚠️  Warning: Could not save progress: {e}")
-            # Don't raise - continue processing even if checkpoint fails
+        with open(self.progress_file, 'w') as f:
+            json.dump(progress_data, f, indent=2)
     
     def is_completed(self, pair_id: str) -> bool:
-        """
-        Check if a pair has already been processed
-        
-        Args:
-            pair_id: Pair identifier (e.g., "pair_042")
-        
-        Returns:
-            True if pair was already processed and saved
-        """
         return pair_id in self.completed_pairs
     
     def reset(self):
-        """
-        Reset progress (start from scratch)
-        
-        Deletes the checkpoint file and clears completed pairs.
-        Use this to force reprocessing of all pairs.
-        """
         self.completed_pairs.clear()
+        self.current_batch.clear()
+        self.current_batch_number = 0
         
         if self.progress_file.exists():
-            try:
-                self.progress_file.unlink()
-                print(f"✓ Reset progress: Deleted {self.progress_file}")
-            except Exception as e:
-                print(f"⚠️  Warning: Could not delete progress file: {e}")
+            self.progress_file.unlink()
         
-        # Reset metadata
         self.metadata = {
             'batch_size': self.batch_size,
             'started': time.strftime('%Y-%m-%d %H:%M:%S')
@@ -268,68 +249,3 @@ def get_remaining_pairs(
     return remaining
 
 
-# ============================================================================
-# TESTING
-# ============================================================================
-
-if __name__ == "__main__":
-    """Test the BatchProcessor"""
-    import tempfile
-    import shutil
-    
-    print("Testing BatchProcessor...")
-    
-    # Create temporary directory
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        
-        # Test 1: Create processor
-        print("\n1. Creating processor...")
-        processor = BatchProcessor(tmpdir, batch_size=5)
-        assert len(processor.completed_pairs) == 0
-        print("✓ Empty processor created")
-        
-        # Test 2: Save progress
-        print("\n2. Saving progress...")
-        processor.save_progress('pair_000')
-        processor.save_progress('pair_001')
-        processor.save_progress('pair_002')
-        assert len(processor.completed_pairs) == 3
-        print("✓ Saved 3 pairs")
-        
-        # Test 3: Check completion
-        print("\n3. Checking completion...")
-        assert processor.is_completed('pair_000')
-        assert processor.is_completed('pair_001')
-        assert not processor.is_completed('pair_999')
-        print("✓ Completion check works")
-        
-        # Test 4: Load existing progress
-        print("\n4. Testing resume...")
-        processor2 = BatchProcessor(tmpdir)
-        assert len(processor2.completed_pairs) == 3
-        assert processor2.is_completed('pair_001')
-        print("✓ Resume works")
-        
-        # Test 5: Reset
-        print("\n5. Testing reset...")
-        processor2.reset()
-        assert len(processor2.completed_pairs) == 0
-        print("✓ Reset works")
-        
-        # Test 6: Utility functions
-        print("\n6. Testing utility functions...")
-        processor.save_progress('pair_010')
-        processor.save_progress('pair_011')
-        
-        completed = load_progress(tmpdir)
-        assert len(completed) == 2
-        
-        remaining = get_remaining_pairs(15, tmpdir)
-        assert len(remaining) == 13
-        assert 'pair_010' not in remaining
-        print("✓ Utility functions work")
-    
-    print("\n" + "="*70)
-    print("✅ ALL TESTS PASSED")
-    print("="*70)

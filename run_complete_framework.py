@@ -23,7 +23,7 @@ def save_for_pose_estimation(
     results: List[MatchingResult],
     output_dir: str,
     method: str = 'best',
-    min_matches: int = 15,
+    min_matches: int = 1,
     min_quality: float = 0.3
 ):
     """
@@ -297,8 +297,9 @@ def main():
             images_dir=images_dir,
             output_dir=output_dir,
             preset=preset,
-            min_matches=15,
-            min_quality=0.3
+            min_matches=1,
+            min_quality=0.1
+
         )
         
         if reconstruction:

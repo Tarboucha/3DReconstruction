@@ -186,7 +186,7 @@ class StructureRefiner(BaseOptimizer):
         points_removed = initial_num_points - final_num_points
         
         print(f"  Final points: {final_num_points}")
-        print(f"  Total removed: {points_removed} ({points_removed/initial_num_points*100:.1f}%)")
+        print(f"  Total removed: {points_removed} ({points_removed/initial_num_points*100:.1f}%)" if initial_num_points > 0 else f"  Total removed: {points_removed} (N/A)")
         print(f"  Mean reprojection error: {metrics.mean_reprojection_error:.2f}px")
         print(f"  Runtime: {runtime:.2f}s")
         

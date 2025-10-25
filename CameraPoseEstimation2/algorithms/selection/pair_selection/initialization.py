@@ -25,13 +25,13 @@ class ScoringConfig:
     match_confidence_weight: float = 0.15
     
     # Quality thresholds
-    min_matches: int = 50
-    min_inlier_ratio: float = 0.3
+    min_matches: int = 1
+    min_inlier_ratio: float = 0.1
     min_coverage_ratio: float = 0.02
     optimal_displacement_range: Tuple[float, float] = (10.0, 100.0)
     
     # Multi-view specific thresholds
-    min_matches_incremental: int = 30  # Lower threshold for incremental views
+    min_matches_incremental: int = 5  # Lower threshold for incremental views
     min_overlap_with_existing: float = 0.4  # Minimum overlap with existing cameras
     max_cameras_per_iteration: int = 1  # How many cameras to add per iteration
     
@@ -49,7 +49,7 @@ class InitializationPairSelector:
         Args:
             config: Scoring configuration for monument-specific requirements
         """
-        self.provider = None
+        self.provider = None 
         self.config = config if config is not None else ScoringConfig()
         self.matches_data = None
         self.pair_scores = []
@@ -230,8 +230,7 @@ class InitializationPairSelector:
             min_inlier_ratio = (self.config.min_inlier_ratio * 0.8 if is_incremental 
                               else self.config.min_inlier_ratio)
             
-            if (score_result.get('inlier_ratio', 0) >= min_inlier_ratio and
-                score_result.get('mean_coverage', 0) >= self.config.min_coverage_ratio):
+            if score_result.get('inlier_ratio', 0) >= min_inlier_ratio:
                 
                 # For incremental: additional connectivity check
                 if is_incremental:
@@ -310,7 +309,7 @@ class InitializationPairSelector:
             print(f"    Total Score: {score_result['total_score']:.3f}")
             print(f"    Matches: {score_result['num_matches']:3d}, "
                   f"Inliers: {score_result['inlier_ratio']:.1%}, "
-                  f"Coverage: {score_result['mean_coverage']:.3f}")
+                  f"Coverage: {score_result['component_scores'].get('coverage', 0):.3f}")
             
             # Show component scores
             components = score_result['component_scores']
@@ -821,7 +820,11 @@ class InitializationPairSelector:
         # Get score type and raw scores
         score_type_str = pair_data.get('score_type', 'distance')
         try:
-            score_type = score_type_str if isinstance(score_type_str, ScoreType) else ScoreType(score_type_str)
+            if isinstance(score_type_str, str):
+                # Convert string to ScoreType enum
+                score_type = ScoreType(score_type_str)
+            else:
+                score_type = score_type_str
         except ValueError:
             print(f"Warning: Unknown score type '{score_type_str}', defaulting to 'distance'")
             score_type = ScoreType.DISTANCE

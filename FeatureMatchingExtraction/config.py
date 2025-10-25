@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
 PRESET_CONFIGS = {
     'fast': {
         'methods': ['ORB'],
-        'max_features': 1000,
+        'max_features': 10000,
         'combine_strategy': 'best',
         'detector_params': {
             'ORB': {
@@ -62,7 +62,7 @@ PRESET_CONFIGS = {
     
     'balanced': {
         'methods': ['SIFT', 'ORB'],
-        'max_features': 2000,
+        'max_features': 20000,
         'combine_strategy': 'independent',
         'detector_params': {
             'SIFT': {'contrast_threshold': 0.04},
@@ -76,7 +76,7 @@ PRESET_CONFIGS = {
     
     'accurate': {
         'methods': ['SIFT', 'AKAZE', 'BRISK'],
-        'max_features': 3000,
+        'max_features': 30000,
         'combine_strategy': 'independent',
         'detector_params': {
             'SIFT': {'contrast_threshold': 0.03},
@@ -92,7 +92,7 @@ PRESET_CONFIGS = {
     
     'deep_learning': {
         'methods': ['SuperPoint', 'DISK'],  #   Changed from ['lightglue']
-        'max_features': 2048,
+        'max_features': 20048,
         'combine_strategy': 'independent',
         'detector_params': {
             'SuperPoint': {'keypoint_threshold': 0.005},
@@ -106,7 +106,7 @@ PRESET_CONFIGS = {
     
     'robust': {
         'methods': ['SIFT', 'AKAZE', 'SuperPoint'],  #   Changed
-        'max_features': 2500,
+        'max_features': 25000,
         'combine_strategy': 'independent',
         'detector_params': {
             'SIFT': {'contrast_threshold': 0.035},

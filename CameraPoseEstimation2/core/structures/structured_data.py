@@ -97,8 +97,13 @@ class StructuredMatchData:
         if not self.matches:
             return np.array([]).reshape(0, 2)
         
-        return np.array([self.keypoints1[m.queryIdx].pt for m in self.matches], 
-                       dtype=np.float32)
+        # Handle both numpy arrays and KeyPoint lists, always index by matches
+        if isinstance(self.keypoints1, np.ndarray):
+            indices = [m.queryIdx for m in self.matches]
+            return self.keypoints1[indices].astype(np.float32)
+        else:
+            return np.array([self.keypoints1[m.queryIdx].pt for m in self.matches], 
+                           dtype=np.float32)
     
     @property
     def pts2(self) -> np.ndarray:
@@ -111,8 +116,13 @@ class StructuredMatchData:
         if not self.matches:
             return np.array([]).reshape(0, 2)
         
-        return np.array([self.keypoints2[m.trainIdx].pt for m in self.matches], 
-                       dtype=np.float32)
+        # Handle both numpy arrays and KeyPoint lists, always index by matches
+        if isinstance(self.keypoints2, np.ndarray):
+            indices = [m.trainIdx for m in self.matches]
+            return self.keypoints2[indices].astype(np.float32)
+        else:
+            return np.array([self.keypoints2[m.trainIdx].pt for m in self.matches], 
+                           dtype=np.float32)
     
     @property
     def match_scores(self) -> np.ndarray:

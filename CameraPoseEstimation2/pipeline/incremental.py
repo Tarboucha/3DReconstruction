@@ -453,15 +453,22 @@ class IncrementalReconstructionPipeline:
     
     def _select_and_prepare_initial_pair(self) -> Tuple:
         """Select and prepare initial image pair"""
+        # Get matches data from provider
+        matches_data = self._get_matches_data_from_provider()
+        
         # Select best pair
-        pair_result = self.pair_selector.find_best_pair(self.provider)
+        pair_result = self.pair_selector.find_best_pair(matches_data)
         
-        if not pair_result.success:
-            raise RuntimeError(f"Failed to select initial pair: {pair_result.message}")
+        if not pair_result or 'best_pair' not in pair_result:
+            raise RuntimeError("Failed to select initial pair: No valid pairs found")
         
-        img1, img2 = pair_result.selected_item
+        img1, img2 = pair_result['best_pair']
         print(f"✓ Selected pair: {img1} <-> {img2}")
-        print(f"  Score: {pair_result.score:.3f}")
+        
+        # Get score information
+        score_result = pair_result['best_score_result']
+        print(f"  Score: {score_result.get('total_score', 0):.3f}")
+        print(f"  Matches: {score_result.get('num_matches', 0)}")
         
         # Get match data
         match_data = self.provider.get_match_data((img1, img2))
@@ -477,6 +484,43 @@ class IncrementalReconstructionPipeline:
         
         return img1, img2, pts1, pts2, img_size1, img_size2
     
+    def _get_matches_data_from_provider(self) -> Dict:
+        """Convert provider data to format expected by pair selector"""
+        matches_data = {}
+        
+        # Get all images
+        all_images = self.provider.get_all_images()
+        
+        # Create pairs and get match data
+        for i, img1 in enumerate(all_images):
+            for j, img2 in enumerate(all_images[i+1:], i+1):
+                try:
+                    match_data = self.provider.get_match_data((img1, img2))
+                    if match_data and 'pts1' in match_data and 'pts2' in match_data:
+                        # Convert to format expected by pair selector
+                        pts1 = match_data['pts1']
+                        pts2 = match_data['pts2']
+                        
+                        # Create correspondences in format [x1, y1, x2, y2]
+                        correspondences = np.column_stack([pts1, pts2])
+                        
+                        # Get image info for sizes
+                        img_info1 = self.provider.get_image_info(img1)
+                        img_info2 = self.provider.get_image_info(img2)
+                        
+                        matches_data[(img1, img2)] = {
+                            'correspondences': correspondences,
+                            'image1_size': (img_info1['width'], img_info1['height']),
+                            'image2_size': (img_info2['width'], img_info2['height']),
+                            'score_type': 'distance',  # Use string to avoid import conflicts
+                            'method': 'unknown'  # Default method
+                        }
+                except Exception as e:
+                    # Skip pairs that don't have match data
+                    continue
+        
+        return matches_data
+    
     def _estimate_initial_intrinsics(self,
                                      pts1: np.ndarray,
                                      pts2: np.ndarray,
@@ -487,16 +531,17 @@ class IncrementalReconstructionPipeline:
         
         essential_result = self.essential_estimator.estimate(
             pts1, pts2, 
-            image_sizes=[img_size1, img_size2]
+            image_size1=img_size1,
+            image_size2=img_size2
         )
         
-        if not essential_result.success:
+        if not essential_result.get('success', False):
             print(f"⚠ Initial estimation failed, using default intrinsics")
             K1 = self._estimate_default_K(img_size1)
             K2 = self._estimate_default_K(img_size2)
         else:
-            K1 = essential_result.data['camera_matrices'][0]
-            K2 = essential_result.data['camera_matrices'][1]
+            K1 = essential_result['camera_matrices'][0]
+            K2 = essential_result['camera_matrices'][1]
             print(f"✓ Initial intrinsics estimated")
         
         return K1, K2
@@ -619,8 +664,11 @@ class IncrementalReconstructionPipeline:
         """Run two-view bundle adjustment (optional final refinement)"""
         print(f"\n--- Two-View Bundle Adjustment ---")
         
+        state = self._reconstruction_to_state()
         ba_result = adjust_two_view(
-            reconstruction_state=self._reconstruction_to_state(),
+            cameras=state['cameras'],
+            points_3d=state['points_3d'],
+            observations=state['observations'],
             optimize_intrinsics=True,
             fix_first_camera=True
         )
@@ -935,9 +983,19 @@ class IncrementalReconstructionPipeline:
         structure_refiner = StructureRefiner()
         
         state = self._reconstruction_to_state()
-        refinement_result = structure_refiner.refine(
+        
+        # Adapt observations list -> per-camera dict expected by StructureRefiner
+        observations_per_camera: Dict[str, List[Dict]] = {}
+        for obs in state['observations']:
+            cam_id = obs['camera_id']
+            observations_per_camera.setdefault(cam_id, []).append(obs)
+        
+        refinement_result = structure_refiner.refine_structure(
             points_3d=state['points_3d'],
-            point_observations=state['observations']
+            cameras=state['cameras'],
+            observations=observations_per_camera,
+            remove_outliers=True,
+            merge_points=True
         )
         
         if refinement_result.success:
@@ -947,30 +1005,51 @@ class IncrementalReconstructionPipeline:
             print(f"  Removed: {refinement_result.metadata.get('points_removed', 0)}")
             
             # Update reconstruction with refined structure
+            refined = refinement_result.optimized_params
             self._update_reconstruction_from_state({
-                'points_3d': refinement_result.data['points_3d'],
-                'observations': refinement_result.data.get('observations', state['observations'])
+                'points_3d': refined['points_3d'],
+                'observations': refined.get('observations', state['observations'])
             })
         else:
             print(f"⚠ Structure refinement failed")
         
         print(f"\n--- Global Bundle Adjustment ---")
         
-        # Global BA
+        # Global BA (ensure points_3d nested structure expected by adjust_global)
+        state_for_ba = self._reconstruction_to_state()
+        # Ensure points_3d nested dict structure
+        if isinstance(state_for_ba.get('points_3d'), np.ndarray):
+            state_for_ba = dict(state_for_ba)
+            state_for_ba['points_3d'] = {'points_3d': state_for_ba['points_3d']}
+        # Ensure observations are per-camera dict as expected by adjust_global
+        if isinstance(state_for_ba.get('observations'), list):
+            obs_per_cam: Dict[str, List[Dict]] = {}
+            for obs in state_for_ba['observations']:
+                cam_id = obs['camera_id']
+                obs_per_cam.setdefault(cam_id, []).append(obs)
+            state_for_ba['observations'] = obs_per_cam
         ba_result = adjust_global(
-            reconstruction_state=self._reconstruction_to_state(),
+            reconstruction_state=state_for_ba,
             optimize_intrinsics=True,
             fix_first_camera=True
         )
         
-        if ba_result['success']:
-            self._update_reconstruction_from_state(ba_result)
+        # adjust_global returns an updated reconstruction_state (no 'success' key)
+        if isinstance(ba_result, dict) and 'cameras' in ba_result and 'points_3d' in ba_result:
+            self._update_reconstruction_from_state({
+                'cameras': ba_result.get('cameras', {}),
+                'points_3d': ba_result.get('points_3d', {}).get('points_3d', state_for_ba['points_3d']['points_3d']),
+                'metadata': {'optimization_history': ba_result.get('optimization_history', [])}
+            })
             print(f"✓ Global bundle adjustment completed")
-            print(f"  Initial error: {ba_result.get('initial_error', 'N/A'):.2f}px")
-            print(f"  Final error: {ba_result.get('final_error', 'N/A'):.2f}px")
-            print(f"  Iterations: {ba_result.get('iterations', 'N/A')}")
+            hist = ba_result.get('optimization_history', [])
+            if hist:
+                last = hist[-1]
+                print(f"  Initial error: {last.get('initial_error', 'N/A')}")
+                print(f"  Final error: {last.get('final_error', 'N/A')}")
+                print(f"  Iterations: {last.get('iterations', 'N/A')}")
         else:
-            print(f"⚠ Global bundle adjustment failed")
+            print(f"⚠ Global bundle adjustment did not return expected state")
         
         # Final quality assessment
         print(f"\n--- Final Quality Assessment ---")
@@ -1326,7 +1405,7 @@ class IncrementalReconstructionPipeline:
                 f.write(f"  {cam_id}:\n")
                 f.write(f"    Observations: {num_obs}\n")
                 f.write(f"    Focal length: {camera.K[0,0]:.1f}px\n")
-                f.write(f"    Position: [{camera.center[0]:.2f}, {camera.center[1]:.2f}, {camera.center[2]:.2f}]\n\n")
+                f.write(f" Position: [{camera.center[0].item():.2f}, {camera.center[1].item():.2f}, {camera.center[2].item():.2f}]\n\n")
             
             f.write("="*70 + "\n")
 

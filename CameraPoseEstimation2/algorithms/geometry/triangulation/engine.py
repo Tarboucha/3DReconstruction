@@ -119,18 +119,15 @@ class TriangulationEngine:
         )
         
         # Convert from homogeneous to 3D coordinates
-        points_3d = points_3d_hom[:3, :] / points_3d_hom[3, :]  # 3xN
+        points_3d = points_3d_hom[:3, :] / np.clip(points_3d_hom[3, :], 1e-12, None)  # 3xN
         
-        # Quality filtering
-        valid_mask = self._filter_triangulated_points(
-            points_3d, pts1, pts2, P1, P2, R1, t1, R2, t2
+        # Build original indices
+        original_indices = np.arange(points_3d.shape[1])
+        
+        # Quality filtering (returns filtered arrays and indices)
+        valid_points_3d, valid_pts1, valid_pts2, valid_indices = self._filter_triangulated_points(
+            points_3d, pts1_to_triangulate, pts2_to_triangulate, P1, P2, original_indices
         )
-        
-        # Keep only valid points
-        valid_points_3d = points_3d[:, valid_mask]
-        valid_pts1 = pts1[valid_mask]
-        valid_pts2 = pts2[valid_mask]
-        valid_indices = np.where(valid_mask)[0]
         
         # Create observation structure
         observations = self._create_initial_observations_with_indices(
@@ -663,15 +660,291 @@ class TriangulationEngine:
         
         return observations
     
-    # Keep all your existing helper methods:
-    # - _triangulate_dlt_batch
-    # - _filter_triangulated_points
-    # - _check_positive_depth
-    # - _check_triangulation_angle
-    # - _check_reprojection_error
-    # - _check_depth_bounds
-    # - _apply_hartley_sturm
-    # etc.
+    def _apply_hartley_sturm(self, pts1: np.ndarray, pts2: np.ndarray,
+                            K1: np.ndarray, K2: np.ndarray,
+                            R1: np.ndarray, t1: np.ndarray,
+                            R2: np.ndarray, t2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Apply Hartley-Sturm optimal triangulation to improve point correspondences.
+        
+        Args:
+            pts1, pts2: Point correspondences (Nx2)
+            K1, K2: Camera intrinsic matrices
+            R1, t1: First camera pose
+            R2, t2: Second camera pose
+            
+        Returns:
+            Refined point correspondences
+        """
+        try:
+            # Normalize points
+            pts1_norm = cv2.undistortPoints(pts1.reshape(-1, 1, 2), K1, None).reshape(-1, 2)
+            pts2_norm = cv2.undistortPoints(pts2.reshape(-1, 1, 2), K2, None).reshape(-1, 2)
+            
+            # Compute fundamental matrix
+            E = self._compute_essential_matrix(R1, t1, R2, t2)
+            F = np.linalg.inv(K2).T @ E @ np.linalg.inv(K1)
+            
+            # Apply Hartley-Sturm correction
+            pts1_corrected = np.zeros_like(pts1_norm)
+            pts2_corrected = np.zeros_like(pts2_norm)
+            
+            for i in range(len(pts1_norm)):
+                pt1_corr, pt2_corr = self._correct_matching_points(
+                    pts1_norm[i], pts2_norm[i], F
+                )
+                pts1_corrected[i] = pt1_corr
+                pts2_corrected[i] = pt2_corr
+            
+            # Convert back to pixel coordinates using camera intrinsics
+            pts1_final = np.zeros_like(pts1)
+            pts2_final = np.zeros_like(pts2)
+            
+            for i in range(len(pts1_corrected)):
+                # Convert normalized coordinates back to pixel coordinates
+                pt1_norm = pts1_corrected[i]
+                pt2_norm = pts2_corrected[i]
+                
+                # Apply camera intrinsics
+                pts1_final[i] = K1[:2, :2] @ pt1_norm + K1[:2, 2]
+                pts2_final[i] = K2[:2, :2] @ pt2_norm + K2[:2, 2]
+            
+            return pts1_final, pts2_final
+            
+        except Exception as e:
+            self.logger.warning(f"Hartley-Sturm correction failed: {e}, using original points")
+            return pts1, pts2
+    
+    def _compute_essential_matrix(self, R1: np.ndarray, t1: np.ndarray,
+                                 R2: np.ndarray, t2: np.ndarray) -> np.ndarray:
+        """Compute essential matrix from camera poses"""
+        # Ensure translation vectors are 1D arrays
+        t1 = t1.flatten()
+        t2 = t2.flatten()
+        
+        # Relative rotation and translation
+        R_rel = R2 @ R1.T
+        t_rel = t2 - R_rel @ t1
+        
+        # Skew-symmetric matrix for translation
+        t_skew = np.array([
+            [0, -t_rel[2], t_rel[1]],
+            [t_rel[2], 0, -t_rel[0]],
+            [-t_rel[1], t_rel[0], 0]
+        ], dtype=np.float64)
+        
+        return t_skew @ R_rel
+    
+    def _correct_matching_points(self, pt1: np.ndarray, pt2: np.ndarray, F: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Correct a single point correspondence using Hartley-Sturm method"""
+        # Convert to homogeneous coordinates
+        p1 = np.array([pt1[0], pt1[1], 1.0])
+        p2 = np.array([pt2[0], pt2[1], 1.0])
+        
+        # Compute epipolar lines
+        l2 = F @ p1  # Epipolar line in image 2
+        l1 = F.T @ p2  # Epipolar line in image 1
+        
+        # Normalize lines
+        l1 = l1 / np.sqrt(l1[0]**2 + l1[1]**2)
+        l2 = l2 / np.sqrt(l2[0]**2 + l2[1]**2)
+        
+        # Find closest points on epipolar lines
+        # For line ax + by + c = 0, closest point to (x0, y0) is:
+        # x = x0 - a*(ax0 + by0 + c)/(a^2 + b^2)
+        # y = y0 - b*(ax0 + by0 + c)/(a^2 + b^2)
+        
+        a1, b1, c1 = l1[0], l1[1], l1[2]
+        a2, b2, c2 = l2[0], l2[1], l2[2]
+        
+        # Correct point 1
+        denom1 = a1**2 + b1**2
+        if denom1 > 1e-10:
+            pt1_corr = pt1 - (a1 * (a1 * pt1[0] + b1 * pt1[1] + c1) / denom1) * np.array([a1, b1])
+        else:
+            pt1_corr = pt1
+        
+        # Correct point 2
+        denom2 = a2**2 + b2**2
+        if denom2 > 1e-10:
+            pt2_corr = pt2 - (a2 * (a2 * pt2[0] + b2 * pt2[1] + c2) / denom2) * np.array([a2, b2])
+        else:
+            pt2_corr = pt2
+        
+        return pt1_corr, pt2_corr
+    
+    def _triangulate_dlt_batch(self, pts1: np.ndarray, pts2: np.ndarray,
+                              P1: np.ndarray, P2: np.ndarray) -> np.ndarray:
+        """
+        Triangulate 3D points using Direct Linear Transform (DLT) method.
+        
+        Args:
+            pts1, pts2: Point correspondences (Nx2)
+            P1, P2: Projection matrices (3x4)
+            
+        Returns:
+            3D points in homogeneous coordinates (4xN)
+        """
+        n_points = len(pts1)
+        points_3d_hom = np.zeros((4, n_points))
+        
+        for i in range(n_points):
+            # Build the DLT system for this point pair
+            x1, y1 = pts1[i]
+            x2, y2 = pts2[i]
+            
+            # Create the 4x4 system: A * X = 0
+            A = np.array([
+                x1 * P1[2, :] - P1[0, :],
+                y1 * P1[2, :] - P1[1, :],
+                x2 * P2[2, :] - P2[0, :],
+                y2 * P2[2, :] - P2[1, :]
+            ])
+            
+            # Solve using SVD
+            try:
+                _, _, Vt = np.linalg.svd(A)
+                X_hom = Vt[-1, :]  # Last row of V^T
+            
+                # Normalize homogeneous coordinates
+                if abs(X_hom[3]) > 1e-10:
+                    X_hom = X_hom / X_hom[3]
+                
+                points_3d_hom[:, i] = X_hom
+                
+            except np.linalg.LinAlgError:
+                # If SVD fails, set point to origin
+                points_3d_hom[:, i] = [0, 0, 0, 1]
+        
+        return points_3d_hom
+    
+    def _filter_triangulated_points(self, points_3d: np.ndarray,
+                                   pts1: np.ndarray, pts2: np.ndarray,
+                                   P1: np.ndarray, P2: np.ndarray,
+                                   original_indices: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Filter triangulated points based on quality criteria.
+        
+        Args:
+            points_3d_hom: 3D points in homogeneous coordinates (4xN)
+            pts1, pts2: Original point correspondences (Nx2)
+            P1, P2: Projection matrices (3x4)
+            original_indices: Original indices of points
+            
+        Returns:
+            Filtered points_3d, pts1, pts2, and indices
+        """
+        valid_mask = np.ones(points_3d.shape[1], dtype=bool)
+        
+        for i in range(points_3d.shape[1]):
+            point_3d = points_3d[:, i]
+            
+            # Check if point is valid
+            if not self._validate_3d_point(point_3d, P1, P2, pts1[i], pts2[i]):
+                valid_mask[i] = False
+        
+        # Filter all arrays
+        filtered_points_3d = points_3d[:, valid_mask]
+        filtered_pts1 = pts1[valid_mask]
+        filtered_pts2 = pts2[valid_mask]
+        filtered_indices = original_indices[valid_mask]
+        
+        return filtered_points_3d, filtered_pts1, filtered_pts2, filtered_indices
+    
+    def _validate_3d_point(self, point_3d: np.ndarray, P1: np.ndarray, P2: np.ndarray,
+                          pt1: np.ndarray, pt2: np.ndarray) -> bool:
+        """
+        Validate a single 3D point based on various criteria.
+        
+        Args:
+            point_3d: 3D point coordinates
+            P1, P2: Projection matrices
+            pt1, pt2: 2D observations
+            
+        Returns:
+            True if point is valid, False otherwise
+        """
+        # Check depth (positive Z in both cameras)
+        if not self._check_positive_depth(point_3d, P1, P2):
+            return False
+        
+        # Check triangulation angle
+        if not self._check_triangulation_angle(point_3d, P1, P2):
+            return False
+        
+        # Check reprojection error
+        if not self._check_reprojection_error(point_3d, P1, P2, pt1, pt2):
+            return False
+        
+        # Check depth bounds
+        if not self._check_depth_bounds(point_3d):
+            return False
+        
+        return True
+    
+    def _check_positive_depth(self, point_3d: np.ndarray, P1: np.ndarray, P2: np.ndarray) -> bool:
+        """Check if point has positive depth in both cameras"""
+        # Project to both cameras
+        point_hom = np.append(point_3d, 1.0)
+        
+        proj1 = P1 @ point_hom
+        proj2 = P2 @ point_hom
+        
+        # Check if Z > 0 (point in front of camera)
+        return proj1[2] > 0 and proj2[2] > 0
+    
+    def _check_triangulation_angle(self, point_3d: np.ndarray, P1: np.ndarray, P2: np.ndarray) -> bool:
+        """Check if triangulation angle is sufficient"""
+        # Camera centers
+        C1 = -P1[:3, :3].T @ P1[:3, 3]
+        C2 = -P2[:3, :3].T @ P2[:3, 3]
+        
+        # Vectors from cameras to point
+        v1 = point_3d - C1
+        v2 = point_3d - C2
+        
+        # Normalize vectors
+        v1_norm = np.linalg.norm(v1)
+        v2_norm = np.linalg.norm(v2)
+        
+        if v1_norm < 1e-10 or v2_norm < 1e-10:
+            return False
+        
+        v1_unit = v1 / v1_norm
+        v2_unit = v2 / v2_norm
+        
+        # Compute angle between vectors
+        cos_angle = np.clip(np.dot(v1_unit, v2_unit), -1.0, 1.0)
+        angle = np.arccos(abs(cos_angle))
+        
+        return angle >= self.min_triangulation_angle
+    
+    def _check_reprojection_error(self, point_3d: np.ndarray, P1: np.ndarray, P2: np.ndarray,
+                                 pt1: np.ndarray, pt2: np.ndarray) -> bool:
+        """Check if reprojection error is within threshold"""
+        point_hom = np.append(point_3d, 1.0)
+        
+        # Project to both cameras
+        proj1 = P1 @ point_hom
+        proj2 = P2 @ point_hom
+        
+        if proj1[2] <= 0 or proj2[2] <= 0:
+            return False
+        
+        # Convert to pixel coordinates
+        proj1_pixel = proj1[:2] / proj1[2]
+        proj2_pixel = proj2[:2] / proj2[2]
+        
+        # Compute reprojection errors
+        error1 = np.linalg.norm(proj1_pixel - pt1)
+        error2 = np.linalg.norm(proj2_pixel - pt2)
+        
+        return error1 <= self.max_reprojection_error and error2 <= self.max_reprojection_error
+    
+    def _check_depth_bounds(self, point_3d: np.ndarray) -> bool:
+        """Check if point depth is within reasonable bounds"""
+        depth = np.linalg.norm(point_3d)
+        return self.min_depth <= depth <= self.max_depth
 
 
 # Keep your existing TriangulationConfig dataclass unchanged
