@@ -14,9 +14,9 @@ import sys
 # Feature matching
 from FeatureMatchingExtraction import create_pipeline, MatchingResult
 
-# Pose estimation  
-from CameraPoseEstimation2.pipeline import IncrementalReconstructionPipeline
-from CameraPoseEstimation2.data import create_provider
+# Pose estimation
+from CameraPoseEstimation.pipeline import IncrementalReconstructionPipeline
+from CameraPoseEstimation.data import create_provider
 
 
 def save_for_pose_estimation(

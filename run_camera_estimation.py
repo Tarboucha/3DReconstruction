@@ -7,9 +7,9 @@ Camera Pose Estimation Pipeline - Main Script
 # =============================================================================
 from pathlib import Path
 from typing import Optional
-from CameraPoseEstimation2.core.interfaces import IMatchDataProvider
-from CameraPoseEstimation2.pipeline.incremental import IncrementalReconstructionPipeline
-from CameraPoseEstimation2.data import create_provider
+from CameraPoseEstimation.core.interfaces import IMatchDataProvider
+from CameraPoseEstimation.pipeline.incremental import IncrementalReconstructionPipeline
+from CameraPoseEstimation.data import create_provider
 
 # =============================================================================
 # CONFIGURATION
@@ -24,6 +24,7 @@ CACHE_SIZE = 100
 PRELOAD_ALL = False
 MIN_QUALITY = None
 MIN_MATCHES = None
+
 
 
 

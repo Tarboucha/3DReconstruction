@@ -60,7 +60,8 @@ class BatchProcessor:
         
         if len(self.current_batch) >= self.batch_size:
             self._save_and_clear_batch()
-    
+
+
     def _save_and_clear_batch(self):
         """Save current batch to file and clear from memory"""
         if not self.current_batch:
@@ -79,7 +80,6 @@ class BatchProcessor:
             }
         }
         
-        
         for pair_id, recon_data in self.current_batch:
             pair_key = (recon_data.image_pair_info.image1_id, recon_data.image_pair_info.image2_id)
             
@@ -87,7 +87,7 @@ class BatchProcessor:
             best_method = None
             best_num_matches = 0
             for method_name, method_data in recon_data.methods.items():
-                num_matches = method_data.num_matches  # This is where num_matches lives!
+                num_matches = method_data.num_matches
                 total_matches += num_matches
                 
                 if num_matches > best_num_matches:
@@ -100,13 +100,29 @@ class BatchProcessor:
                 'best_num_matches': best_num_matches,
                 'num_methods': len(recon_data.methods),
                 'recon_data': recon_data
-}
+            }
         
         with open(batch_file, 'wb') as f:
             pickle.dump(batch_data, f)
         
+        # ✅ Batch update progress for all pairs
+        for pair_id, _ in self.current_batch:
+            self.completed_pairs.add(pair_id)
+        
+        # Write progress file once for the entire batch
+        progress_data = {
+            'completed_pairs': sorted(list(self.completed_pairs)),
+            'total_completed': len(self.completed_pairs),
+            'last_updated': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'metadata': self.metadata
+        }
+        
+        with open(self.progress_file, 'w') as f:
+            json.dump(progress_data, f, indent=2)
+        
         self.current_batch.clear()
-    
+
+
     def finalize(self):
         """Save any remaining results in current batch"""
         if self.current_batch:

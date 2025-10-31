@@ -27,12 +27,17 @@ from .result_converters import (
     save_for_reconstruction
     )
 
-from .matcher_factory import MatcherFactory 
+from .matchers import create_matcher
 from .utils import (
     calculate_reprojection_error,
-    adaptive_match_filtering, 
+    adaptive_match_filtering,
     enhanced_filter_matches_with_homography
 )
+
+from .logger import get_logger
+
+# Module logger
+logger = get_logger("pipeline")
 
 
 class FeatureProcessingPipeline:
@@ -79,8 +84,8 @@ class FeatureProcessingPipeline:
         # Force 'independent' strategy for multi-method pipelines
         combine_strategy = config.get('combine_strategy', 'independent')
         if len(config.get('methods', [])) > 1 and combine_strategy not in ['independent', 'best']:
-            print(f"⚠️  combine_strategy '{combine_strategy}' not suitable for multi-method")
-            print("   Using 'independent' strategy")
+            logger.warning(f"combine_strategy '{combine_strategy}' not suitable for multi-method")
+            logger.warning("Using 'independent' strategy")
             combine_strategy = 'independent'
             config['combine_strategy'] = combine_strategy
         
@@ -95,13 +100,18 @@ class FeatureProcessingPipeline:
             combine_strategy=combine_strategy
         )
         
-        # Initialize matchers
+        # Initialize matchers using new matchers module
         self.matchers = {}
         matcher_config = config.get('matcher_config', {})
-        matcher_factory = MatcherFactory()
         for method in config.get('methods', ['SIFT']):
             matcher_type = matcher_config.get(method, None)
-            self.matchers[method] = matcher_factory.create_matcher(method, matcher_type)
+            # Use create_matcher from new matchers module
+            try:
+                self.matchers[method] = create_matcher(method, matcher_type=matcher_type)
+            except Exception as e:
+                logger.warning(f"Failed to create matcher for {method}: {e}")
+                logger.warning(f"Skipping {method}")
+                continue
         
         self.filtering_config = config.get('filtering', {})
     
@@ -114,7 +124,7 @@ class FeatureProcessingPipeline:
         image2_id: str = "image2",
         image1_size: Optional[Tuple[int, int]] = None,
         image2_size: Optional[Tuple[int, int]] = None,
-        filter_matches: bool = True,
+        filter_matches: bool = False,
         compute_geometry: bool = True,
         visualize: bool = False
     ) -> MatchingResult:
@@ -152,26 +162,43 @@ class FeatureProcessingPipeline:
         multi_features2 = self.multi_detector.detect_all(image2) 
         detection_time = time.time() - start_time
 
-        print(f"\n Matching features...")
+        logger.debug("Matching features...")
 
         # Match with each method independently
         method_results = {}
 
         for method in self.config.get('methods', ['SIFT']):
-            if method not in multi_features1:  
+            if method not in multi_features1:
                 continue
-            
-            features1 = multi_features1[method]  
-            features2 = multi_features2[method] 
-            
+
+            features1 = multi_features1[method]
+            features2 = multi_features2[method]
+
             # Match
             matcher = self.matchers[method]
             start_match = time.time()
-            match_data = matcher.match(features1, features2)
+
+            # Check if this is a dense matcher (needs images instead of features)
+            from .matchers.dense_adapter import DenseMatcherAdapter
+            if isinstance(matcher, DenseMatcherAdapter):
+                # Dense matcher needs raw images
+                match_data = matcher.match(
+                    descriptors1=None,
+                    descriptors2=None,
+                    image1=image1,
+                    image2=image2
+                )
+            else:
+                # Sparse matcher uses features
+                match_data = matcher.match(features1, features2)
+
             matching_time = time.time() - start_match
 
-            # Apply filtering if requested
-            if filter_matches and len(match_data.matches) > 0:
+            # Check if this is dense matching (skip filtering for dense methods)
+            is_dense = isinstance(matcher, DenseMatcherAdapter)
+
+            # Apply filtering if requested (but skip for dense matchers)
+            if filter_matches and len(match_data.matches) > 0 and not is_dense:
                 match_data = self._apply_filtering(
                     match_data,
                     features1.keypoints,
@@ -189,53 +216,76 @@ class FeatureProcessingPipeline:
             reprojection_error = None
 
             if compute_geometry and num_matches > 4:
-                # Homography might already be computed during filtering
-                homography = match_data.homography
-                fundamental_matrix = match_data.fundamental_matrix
-                
-                # If homography exists, calculate additional metrics
-                if homography is not None and num_matches > 0:
-                    
-                    errors = calculate_reprojection_error(
-                        features1.keypoints,
-                        features2.keypoints,
-                        best_matches,
-                        homography
-                    )
-                    
-                    if len(errors) > 0:
-                        inlier_threshold = self.filtering_config.get('ransac_threshold', 4.0)
-                        inliers = np.sum(errors < inlier_threshold)
-                        inlier_ratio = inliers / len(errors)
-                        reprojection_error = float(np.mean(errors))
-                
-                # If no homography yet (filtering not applied or failed), compute it now
-                elif num_matches >= 4:
+                # For dense matchers, extract keypoints from metadata
+                if is_dense and hasattr(match_data, 'metadata') and 'dense_matches' in match_data.metadata:
+                    # Extract coordinates from dense matches: Nx4 array [x1, y1, x2, y2]
+                    dense_coords = match_data.metadata['dense_matches']
+                    pts1 = dense_coords[:, :2].astype(np.float32)  # x1, y1
+                    pts2 = dense_coords[:, 2:].astype(np.float32)  # x2, y2
+
                     try:
-                        pts1 = np.float32([features1.keypoints[m.queryIdx].pt for m in best_matches])
-                        pts2 = np.float32([features2.keypoints[m.trainIdx].pt for m in best_matches])
-                        
-                        H, mask = cv2.findHomography(pts1, pts2, cv2.RANSAC, 
+                        H, mask = cv2.findHomography(pts1, pts2, cv2.RANSAC,
                                                     self.filtering_config.get('ransac_threshold', 4.0))
                         if H is not None:
                             homography = H
                             match_data.homography = H
-                            
-                            # Calculate metrics
-                            errors = calculate_reprojection_error(
-                                features1.keypoints,
-                                features2.keypoints,
-                                best_matches,
-                                homography
-                            )
-                            if len(errors) > 0:
-                                inlier_threshold = self.filtering_config.get('ransac_threshold', 4.0)
-                                inliers = np.sum(errors < inlier_threshold)
-                                inlier_ratio = inliers / len(errors)
-                                reprojection_error = float(np.mean(errors))
-                            
+
+                            # Calculate inliers
+                            if mask is not None:
+                                inliers = np.sum(mask)
+                                inlier_ratio = inliers / len(mask)
                     except Exception as e:
-                        print(f"  ⚠️  Homography computation failed: {e}")
+                        logger.debug(f"Homography computation failed for dense matcher: {e}")
+
+                else:
+                    # Sparse matcher - use traditional keypoints
+                    # Homography might already be computed during filtering
+                    homography = match_data.homography
+                    fundamental_matrix = match_data.fundamental_matrix
+
+                    # If homography exists, calculate additional metrics
+                    if homography is not None and num_matches > 0:
+
+                        errors = calculate_reprojection_error(
+                            features1.keypoints,
+                            features2.keypoints,
+                            best_matches,
+                            homography
+                        )
+
+                        if len(errors) > 0:
+                            inlier_threshold = self.filtering_config.get('ransac_threshold', 4.0)
+                            inliers = np.sum(errors < inlier_threshold)
+                            inlier_ratio = inliers / len(errors)
+                            reprojection_error = float(np.mean(errors))
+
+                    # If no homography yet (filtering not applied or failed), compute it now
+                    elif num_matches >= 4:
+                        try:
+                            pts1 = np.float32([features1.keypoints[m.queryIdx].pt for m in best_matches])
+                            pts2 = np.float32([features2.keypoints[m.trainIdx].pt for m in best_matches])
+
+                            H, mask = cv2.findHomography(pts1, pts2, cv2.RANSAC,
+                                                        self.filtering_config.get('ransac_threshold', 4.0))
+                            if H is not None:
+                                homography = H
+                                match_data.homography = H
+
+                                # Calculate metrics
+                                errors = calculate_reprojection_error(
+                                    features1.keypoints,
+                                    features2.keypoints,
+                                    best_matches,
+                                    homography
+                                )
+                                if len(errors) > 0:
+                                    inlier_threshold = self.filtering_config.get('ransac_threshold', 4.0)
+                                    inliers = np.sum(errors < inlier_threshold)
+                                    inlier_ratio = inliers / len(errors)
+                                    reprojection_error = float(np.mean(errors))
+
+                        except Exception as e:
+                            logger.debug(f"Homography computation failed: {e}")
 
             # Create MethodResult
             method_result = create_method_result(
@@ -295,15 +345,15 @@ class FeatureProcessingPipeline:
         ransac_threshold = self.filtering_config.get('ransac_threshold', 4.0)
         
         # Get the matches to filter
-        matches_to_filter = match_data.get_best_matches()  # ✅ Get matches from MatchData
+        matches_to_filter = match_data.get_best_matches()  
         
         if use_adaptive:
             # Adaptive filtering
             filtered_matches, H, filter_info = adaptive_match_filtering(
                 keypoints1,
                 keypoints2,
-                matches_to_filter,  # ✅ Pass matches as list
-                match_data,  # ✅ Pass MatchData separately
+                matches_to_filter,  
+                match_data,  
                 ransac_threshold=ransac_threshold
             )
             
@@ -315,7 +365,7 @@ class FeatureProcessingPipeline:
             filtered_matches, H = enhanced_filter_matches_with_homography(
                 keypoints1,
                 keypoints2,
-                matches_to_filter,  # ✅ Pass matches as list
+                matches_to_filter,  
                 match_data,
                 ransac_threshold=ransac_threshold
             )
@@ -895,7 +945,7 @@ class FeatureProcessingPipeline:
         # Processing Parameters
         save_metadata: bool = True,
         metadata_path: Optional[str] = None,
-        filter_matches: bool = True,
+        filter_matches: bool = False,
         compute_geometry: bool = True,
         visualize: bool = False
     ) -> List[MatchingResult]:
@@ -983,12 +1033,12 @@ class FeatureProcessingPipeline:
             batch_processor = BatchProcessor(output_dir, batch_size=batch_size)
             
             if resume and batch_processor.completed_pairs:
-                print(f"\n📋 Resume: {len(batch_processor.completed_pairs)} pairs already done")
-        
+                logger.info(f"Resume: {len(batch_processor.completed_pairs)} pairs already done")
+
         # Scan folder for metadata
-        print(f"\n{'='*70}")
-        print(f"BATCH PROCESSING WITH SMART CACHING")
-        print(f"{'='*70}")
+        logger.info("="*70)
+        logger.info("BATCH PROCESSING WITH SMART CACHING")
+        logger.info("="*70)
         
         ext = pattern.replace('*', '').lower()
         if not ext.startswith('.'):
@@ -1003,17 +1053,17 @@ class FeatureProcessingPipeline:
         except ValueError as e:
             raise ValueError(f"Error with folder: {e}")
         
-        print(f"\n📂 Scanning {folder_path}...")
+        logger.info(f"Scanning {folder_path}...")
         metadata_list = image_source.get_metadata_list()
-        
+
         if not metadata_list:
             raise ValueError(f"No images found in {folder_path} with pattern {pattern}")
-        
-        print(f"✓ Found {len(metadata_list)} images")
-        
+
+        logger.info(f"Found {len(metadata_list)} images")
+
         total_size_mb = sum(m.file_size_bytes for m in metadata_list) / (1024 * 1024)
-        print(f"  Total size: {total_size_mb:.2f} MB ({total_size_mb/1024:.2f} GB)")
-        print(f"  Metadata size: ~{len(metadata_list) * 0.5 / 1024:.2f} MB")
+        logger.info(f"  Total size: {total_size_mb:.2f} MB ({total_size_mb/1024:.2f} GB)")
+        logger.info(f"  Metadata size: ~{len(metadata_list) * 0.5 / 1024:.2f} MB")
         
         # Save metadata
         if save_metadata and auto_save:
@@ -1029,27 +1079,31 @@ class FeatureProcessingPipeline:
                             'identifier': m.identifier,
                             'filepath': str(m.filepath),
                             'file_size_bytes': m.file_size_bytes,
-                            'source_type': m.source_type.value
+                            'source_type': m.source_type.value,
+                            'width': m.width,         
+                            'height': m.height,        
+                            'channels': m.channels,     
+                            'size': (m.height, m.width) 
                         }
                         for m in metadata_list
                     ]
                 }
                 with open(meta_path, 'wb') as f:
                     pickle.dump(metadata_dict, f)
-                print(f"💾 Metadata saved")
+                logger.info("Metadata saved")
             except Exception as e:
-                print(f"  ⚠️  Metadata save failed: {e}")
-        
+                logger.warning(f"Metadata save failed: {e}")
+
         # Create pairs from metadata
-        print(f"\n🔗 Creating pairs...")
+        logger.info("Creating pairs...")
         pairs_metadata = create_pairs_from_metadata(metadata_list, pair_mode)
         total_pairs = len(pairs_metadata)
-        
+
         if total_pairs == 0:
-            print("  ⚠️  No pairs created")
+            logger.warning("No pairs created")
             return []
-        
-        print(f"✓ Created {total_pairs} pairs ({pair_mode} mode)")
+
+        logger.info(f"Created {total_pairs} pairs ({pair_mode} mode)")
         
         # Initialize batch loader and tracking
         batch_loader = BatchImageLoader(cache_size_mb=cache_size_mb)
@@ -1070,14 +1124,14 @@ class FeatureProcessingPipeline:
         }
         
         start_time = time.time()
-        
-        print(f"\n⚙️  Processing Configuration:")
-        print(f"Batch size: {batch_size}")
-        print(f"Cache size: {cache_size_mb} MB")
-        print(f"Auto-save: {'ON' if auto_save else 'OFF'}")
+
+        logger.info("Processing Configuration:")
+        logger.info(f"Batch size: {batch_size}")
+        logger.info(f"Cache size: {cache_size_mb} MB")
+        logger.info(f"Auto-save: {'ON' if auto_save else 'OFF'}")
         if auto_save and resume:
-            print(f"Resume: ON")
-        print(f"{'='*70}")
+            logger.info("Resume: ON")
+        logger.info("="*70)
         
         total_batches = (total_pairs + batch_size - 1) // batch_size
         
@@ -1085,29 +1139,29 @@ class FeatureProcessingPipeline:
             batch_end = min(batch_start + batch_size, total_pairs)
             batch_num = (batch_start // batch_size) + 1
             
-            print(f"\n{'='*70}")
-            print(f"BATCH {batch_num}/{total_batches}: Pairs {batch_start}-{batch_end-1}")
-            print(f"{'='*70}")
-            
+            logger.info("="*70)
+            logger.info(f"BATCH {batch_num}/{total_batches}: Pairs {batch_start}-{batch_end-1}")
+            logger.info("="*70)
+
             # Get metadata for this batch
             batch_pairs_metadata = pairs_metadata[batch_start:batch_end]
-            
+
             # Analyze batch
             batch_analysis = analyze_batch_reuse(batch_pairs_metadata)
-            print(f"  📊 Unique images needed: {batch_analysis['unique_images']}")
-            print(f"  ♻️  Image reuse ratio: {batch_analysis['reuse_ratio']:.1%}")
-            
+            logger.info(f"  Unique images needed: {batch_analysis['unique_images']}")
+            logger.info(f"  Image reuse ratio: {batch_analysis['reuse_ratio']:.1%}")
+
             # Load images for this batch
-            print(f"  📥 Loading batch images...")
+            logger.info("  Loading batch images...")
             cache_before = len(batch_loader.cache)
             num_loaded = batch_loader.load_batch(batch_pairs_metadata, resize_to=resize_to)
             cache_after = len(batch_loader.cache)
-            
+
             stats['total_images_loaded'] += num_loaded
             stats['cache_hits'] += (batch_analysis['unique_images'] - num_loaded)
-            
-            print(f"  ✓ Loaded {num_loaded} new, {cache_after - num_loaded} from cache")
-            print(f"  💾 Cache: {batch_loader.get_cache_stats()}")
+
+            logger.info(f"  Loaded {num_loaded} new, {cache_after - num_loaded} from cache")
+            logger.debug(f"  Cache: {batch_loader.get_cache_stats()}")
             
             # Process pairs in batch
             batch_results = []
@@ -1119,14 +1173,14 @@ class FeatureProcessingPipeline:
                 
                 # Check if completed (resume functionality)
                 if auto_save and resume and batch_processor.is_completed(pair_id):
-                    print(f"\n⏭  {pair_id}: Already completed")
+                    logger.info(f"{pair_id}: Already completed")
                     stats['skipped_already_done'] += 1
                     continue
-                
-                print(f"\n{'-'*60}")
-                print(f"[{i+1}/{total_pairs}] {pair_id}")
-                print(f"  {meta1.identifier} → {meta2.identifier}")
-                print(f"{'-'*60}")
+
+                logger.info("-"*60)
+                logger.info(f"[{i+1}/{total_pairs}] {pair_id}")
+                logger.info(f"  {meta1.identifier} -> {meta2.identifier}")
+                logger.info("-"*60)
                 
                 try:
                     # Get images from cache
@@ -1134,7 +1188,7 @@ class FeatureProcessingPipeline:
                     img2_info = batch_loader.get_image(meta2.identifier)
                     
                     if img1_info is None or img2_info is None:
-                        print(f"❌ Images not in cache!")
+                        logger.error("Images not in cache!")
                         stats['failed'] += 1
                         continue
                     
@@ -1155,15 +1209,18 @@ class FeatureProcessingPipeline:
                     stats['processed'] += 1
                     
                     # Get stats
-                    best_result = result.get_best()
-                    if best_result:
-                        num_matches = best_result.num_matches
-                        best_method = best_result.method_name
-                        print(f"  ✓ {best_method}: {num_matches} matches")
-                    else:
-                        num_matches = 0
-                        print(f"  ⚠️  No matches found")
-                    
+                    # best_result = result.get_best()
+                    # if best_result:
+                    #     num_matches = best_result.num_matches
+                    #     best_method = best_result.method_name
+                    #     print(f"  ✓ {best_method}: {num_matches} matches")
+                    # else:
+                    #     num_matches = 0
+                    #     print(f"  ⚠️  No matches found")
+                    num_matches=0
+                    for method in result.methods.values():
+                        num_matches+= method.num_matches
+
                     # Collect reconstruction data if sufficient matches
                     if num_matches >= min_matches_for_save:
                         recon_data = result.to_reconstruction()
@@ -1173,19 +1230,20 @@ class FeatureProcessingPipeline:
                             'image1_id': result.image_pair_info.image1_id,
                             'image2_id': result.image_pair_info.image2_id,
                             'num_matches': num_matches,
-                            'method': best_method,
                             'reconstruction': recon_data
                         })
                         
-                        # Mark as completed for resume
-                        if auto_save and batch_processor:
-                            batch_processor.save_progress(pair_id)
+                        
                     else:
-                        print(f"⏭️  Skipped: {num_matches} < {min_matches_for_save}")
+                        logger.info(f"Skipped: {num_matches} < {min_matches_for_save}")
                         stats['skipped_insufficient_matches'] += 1
-                
+
+                    if auto_save and batch_processor:
+                        batch_processor.save_progress(pair_id)
+
+
                 except Exception as e:
-                    print(f"❌ Error: {e}")
+                    logger.error(f"Error: {e}")
                     stats['failed'] += 1
                     import traceback
                     traceback.print_exc()
@@ -1201,18 +1259,18 @@ class FeatureProcessingPipeline:
                     )
                     stats['saved'] += len(batch_recon_data)
                     stats['batches_saved'] += 1
-                    print(f"\n💾 Batch {batch_num} reconstruction data saved ({len(batch_recon_data)} pairs)")
+                    logger.info(f"Batch {batch_num} reconstruction data saved ({len(batch_recon_data)} pairs)")
                 except Exception as e:
-                    print(f"\n⚠️  Batch save failed: {e}")
+                    logger.warning(f"Batch save failed: {e}")
                     import traceback
                     traceback.print_exc()
-            
+
             # End of batch
-            print(f"\n{'='*70}")
-            print(f"BATCH {batch_num} COMPLETE")
-            print(f"  Processed: {len(batch_results)}")
-            print(f"  With reconstruction data: {len(batch_recon_data)}")
-            print(f"{'='*70}")
+            logger.info("="*70)
+            logger.info(f"BATCH {batch_num} COMPLETE")
+            logger.info(f"  Processed: {len(batch_results)}")
+            logger.info(f"  With reconstruction data: {len(batch_recon_data)}")
+            logger.info("="*70)
             
             all_results.extend(batch_results)
             all_reconstruction_data.extend([item['reconstruction'] for item in batch_recon_data])
@@ -1221,23 +1279,23 @@ class FeatureProcessingPipeline:
             del batch_results
             del batch_recon_data
             gc.collect()
-            
-            print(f"🧹 Batch memory cleared (cache retained)")
-        
+
+            logger.debug("Batch memory cleared (cache retained)")
+
         # Cleanup
         batch_loader.clear_batch()
-        print(f"\n🧹 Image cache cleared")
+        logger.debug("Image cache cleared")
         
         total_time = time.time() - start_time
         
         # Cache efficiency
-        print(f"\n📊 Cache Efficiency:")
-        print(f"  Images loaded from disk: {stats['total_images_loaded']}")
-        print(f"  Cache hits (reused): {stats['cache_hits']}")
+        logger.info("Cache Efficiency:")
+        logger.info(f"  Images loaded from disk: {stats['total_images_loaded']}")
+        logger.info(f"  Cache hits (reused): {stats['cache_hits']}")
         total_refs = stats['total_images_loaded'] + stats['cache_hits']
         if total_refs > 0:
-            print(f"  Cache hit rate: {100 * stats['cache_hits'] / total_refs:.1f}%")
-        
+            logger.info(f"  Cache hit rate: {100 * stats['cache_hits'] / total_refs:.1f}%")
+
         # Create summary
         if auto_save:
             try:
@@ -1247,18 +1305,18 @@ class FeatureProcessingPipeline:
                 )
                 self._print_final_summary(summary, output_dir, stats)
             except Exception as e:
-                print(f"\n⚠️  Summary failed: {e}")
+                logger.warning(f"Summary failed: {e}")
         else:
-            print(f"\n{'='*70}")
-            print(f"COMPLETE")
-            print(f"{'='*70}")
-            print(f"  Pairs: {stats['total_pairs']}")
-            print(f"  Processed: {stats['processed']}")
-            print(f"  Failed: {stats['failed']}")
-            print(f"  Time: {total_time:.2f}s ({total_time/60:.1f}m)")
+            logger.info("="*70)
+            logger.info("COMPLETE")
+            logger.info("="*70)
+            logger.info(f"  Pairs: {stats['total_pairs']}")
+            logger.info(f"  Processed: {stats['processed']}")
+            logger.info(f"  Failed: {stats['failed']}")
+            logger.info(f"  Time: {total_time:.2f}s ({total_time/60:.1f}m)")
             if stats['processed'] > 0:
-                print(f"  Avg: {total_time/stats['processed']:.2f}s/pair")
-            print(f"{'='*70}")
+                logger.info(f"  Avg: {total_time/stats['processed']:.2f}s/pair")
+            logger.info("="*70)
         
         return all_results
 
@@ -1293,8 +1351,7 @@ class FeatureProcessingPipeline:
                     'pair_index': item['pair_index'],
                     'image1_id': item['image1_id'],
                     'image2_id': item['image2_id'],
-                    'num_matches': item['num_matches'],
-                    'method': item['method']
+                    'num_matches': item['num_matches']
                 }
                 for item in batch_recon_data
             ]
@@ -1350,10 +1407,10 @@ class FeatureProcessingPipeline:
                         if batch_processor:
                             batch_processor.save_progress(item['pair_id'])
                     
-                    print(f"  ✓ Loaded {len(batch_data)} pairs from {batch_dir.name}")
-            
+                    logger.info(f"  Loaded {len(batch_data)} pairs from {batch_dir.name}")
+
             except Exception as e:
-                print(f"  ⚠️  Failed to load {batch_dir.name}: {e}")
+                logger.warning(f"  Failed to load {batch_dir.name}: {e}")
         
         return all_results, all_reconstruction_data
 
@@ -1427,41 +1484,41 @@ class FeatureProcessingPipeline:
         stats: Dict
     ):
         """Print final summary to console"""
-        print(f"\n{'='*70}")
-        print(f"FINAL SUMMARY")
-        print(f"{'='*70}")
-        
+        logger.info("="*70)
+        logger.info("FINAL SUMMARY")
+        logger.info("="*70)
+
         # Stats
-        print(f"\n Processing Statistics:")
-        print(f"  Total pairs: {stats['total_pairs']}")
-        print(f"  Successfully processed: {stats['processed']}")
-        print(f"  Saved for reconstruction: {stats['saved']}")
-        
+        logger.info("Processing Statistics:")
+        logger.info(f"  Total pairs: {stats['total_pairs']}")
+        logger.info(f"  Successfully processed: {stats['processed']}")
+        logger.info(f"  Saved for reconstruction: {stats['saved']}")
+
         if stats['skipped_already_done'] > 0:
-            print(f"  Skipped (already done): {stats['skipped_already_done']}")
+            logger.info(f"  Skipped (already done): {stats['skipped_already_done']}")
         if stats['skipped_insufficient_matches'] > 0:
-            print(f"  Skipped (low matches): {stats['skipped_insufficient_matches']}")
+            logger.info(f"  Skipped (low matches): {stats['skipped_insufficient_matches']}")
         if stats['failed'] > 0:
-            print(f"  Failed: {stats['failed']}")
-        
+            logger.info(f"  Failed: {stats['failed']}")
+
         # Timing
         timing = summary['timing']
-        print(f"\n⏱  Timing:")
-        print(f"  Total: {timing['total_time']}s ({timing['total_time']/60:.1f} min)")
-        print(f"  Avg per pair: {timing['average_per_pair']}s")
-        
+        logger.info("Timing:")
+        logger.info(f"  Total: {timing['total_time']}s ({timing['total_time']/60:.1f} min)")
+        logger.info(f"  Avg per pair: {timing['average_per_pair']}s")
+
         # Output
-        print(f"\n📁 Output Structure:")
-        print(f"  {output_dir}/")
-        print(f"  ├── matching_results/       ({stats['saved']} pairs)")
-        print(f"  ├── reconstruction/         ({stats['saved']} pairs)")
-        print(f"  ├── progress.json           (checkpoint)")
-        print(f"  ├── image_metadata.pkl")
-        print(f"  └── batch_summary.json")
-        
-        print(f"\n{'='*70}")
-        print(f" ALL PROCESSING COMPLETE")
-        print(f"{'='*70}")
+        logger.info("Output Structure:")
+        logger.info(f"  {output_dir}/")
+        logger.info(f"  ├── matching_results/       ({stats['saved']} pairs)")
+        logger.info(f"  ├── reconstruction/         ({stats['saved']} pairs)")
+        logger.info(f"  ├── progress.json           (checkpoint)")
+        logger.info(f"  ├── image_metadata.pkl")
+        logger.info(f"  └── batch_summary.json")
+
+        logger.info("="*70)
+        logger.info("ALL PROCESSING COMPLETE")
+        logger.info("="*70)
 
 
 # =============================================================================
@@ -1472,49 +1529,57 @@ def create_pipeline(
     preset: str = 'balanced',
     methods: Optional[List[str]] = None,
     max_features: Optional[int] = None,
+    log_level: str = 'INFO',
+    log_file: Optional[str] = None,
     **kwargs
 ) -> FeatureProcessingPipeline:
     """
     Create a feature processing pipeline with preset or custom configuration
-    
+
     Args:
         preset: Preset name ('fast', 'balanced', 'accurate', 'custom')
         methods: List of method names (overrides preset)
         max_features: Max features per method (overrides preset)
+        log_level: Logging level ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+        log_file: Optional path to log file
         **kwargs: Additional configuration parameters
-    
+
     Returns:
         FeatureProcessingPipeline instance
-    
+
     Examples:
         >>> # Use preset
         >>> pipeline = create_pipeline('balanced')
-        
-        >>> # Custom methods
-        >>> pipeline = create_pipeline('custom', methods=['SIFT', 'ALIKED'])
-        
-        >>> # Override preset
-        >>> pipeline = create_pipeline('fast', max_features=5000)
+
+        >>> # Custom methods with debug logging
+        >>> pipeline = create_pipeline('custom', methods=['SIFT', 'ALIKED'], log_level='DEBUG')
+
+        >>> # Override preset with log file
+        >>> pipeline = create_pipeline('fast', max_features=5000, log_file='process.log')
     """
     from .config import create_config_from_preset
-    
+    from .logger import configure_root_logger
+
+    # Configure logging
+    configure_root_logger(level=log_level, log_file=log_file)
+
     # Get preset config
     if preset != 'custom':
         config = create_config_from_preset(preset)
     else:
         config = {}
-    
+
     # Override with custom parameters
     if methods is not None:
         config['methods'] = methods
     if max_features is not None:
         config['max_features'] = max_features
-    
+
     # Merge additional kwargs
     config.update(kwargs)
-    
+
     # Ensure we have methods
     if 'methods' not in config:
         config['methods'] = ['SIFT']
-    
+
     return FeatureProcessingPipeline(config)

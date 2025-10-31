@@ -52,6 +52,9 @@ class ImageMetadata:
     file_size_bytes: Optional[int] = None
     source_type: ImageSourceType = ImageSourceType.FOLDER
     metadata: Dict[str, Any] = field(default_factory=dict)
+    width: int = 0
+    height: int = 0
+    channels: int = 3
     
     def __hash__(self):
         """Make hashable for use in sets/dicts"""
@@ -382,14 +385,21 @@ class FolderImageSource:
                 file_size = filepath.stat().st_size
                 
                 # Create metadata (no image loading!)
+                from PIL import Image
+                with Image.open(filepath) as img:
+                    width, height = img.size
+                    channels = len(img.getbands())
+                
                 metadata = ImageMetadata(
                     filepath=filepath,
                     identifier=filepath.name,
                     file_size_bytes=file_size,
                     source_type=ImageSourceType.FOLDER,
-                    metadata={'folder': str(self.folder_path)}
+                    metadata={'folder': str(self.folder_path)},
+                    width=width,     
+                    height=height,   
+                    channels=channels 
                 )
-                
                 metadata_list.append(metadata)
                 
             except Exception as e:

@@ -117,42 +117,39 @@ from .batch_processor import (
 )
 
 # =============================================================================
-# DETECTORS
+# DETECTORS (from matchers module)
 # =============================================================================
 
-# Traditional detectors
-from .traditional_detectors import (
+# Import from new matchers module
+from .matchers.detectors.traditional import (
     SIFTDetector,
     ORBDetector,
     AKAZEDetector,
-    BRISKDetector,
 )
 
 # Deep learning detectors (if available)
 try:
-    from .deep_learning_detectors import (
+    from .matchers.detectors.deep_learning import (
         SuperPointDetector,
         ALIKEDDetector,
-        DISKDetector,
     )
     _has_deep_learning = True
 except ImportError:
     _has_deep_learning = False
 
-# Multi-method detector
+# Multi-method detector (uses matchers module internally)
 from .multi_method_detector import MultiMethodFeatureDetector
 
 # =============================================================================
-# MATCHERS
+# MATCHERS (from matchers module)
 # =============================================================================
 
-from .feature_matchers import (
-    EnhancedBFMatcher,
-    EnhancedFLANNMatcher,
-    auto_select_matcher,
+from .matchers import (
+    create_matcher,
+    create_dense_matcher,
+    DenseMatcher,
+    SparsePipeline,
 )
-
-from .matcher_factory import MatcherFactory
 
 # =============================================================================
 # VISUALIZATION
@@ -187,17 +184,29 @@ from .utils import (
     image_size_from_shape,
     resize_image,
     print_size_info,
-    
+
     # Filtering
     enhanced_filter_matches_with_homography,
     adaptive_match_filtering,
     calculate_reprojection_error,
-    
+
     # Serialization helpers
     keypoint_to_dict,
     dict_to_keypoint,
     keypoints_to_list,
     list_to_keypoints,
+)
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+from .logger import (
+    setup_logger,
+    get_logger,
+    configure_root_logger,
+    disable_console_logging,
+    set_level,
 )
 
 # =============================================================================
@@ -253,18 +262,17 @@ __all__ = [
     'delete_progress',
     'get_remaining_pairs',
     
-    # Detectors
+    # Detectors (from matchers module)
     'SIFTDetector',
     'ORBDetector',
     'AKAZEDetector',
-    'BRISKDetector',
     'MultiMethodFeatureDetector',
-    
-    # Matchers
-    'EnhancedBFMatcher',
-    'EnhancedFLANNMatcher',
-    'auto_select_matcher',
-    'MatcherFactory',
+
+    # Matchers (from matchers module)
+    'create_matcher',
+    'create_dense_matcher',
+    'DenseMatcher',
+    'SparsePipeline',
     
     # Visualization
     'plot_visualization_data',
@@ -291,6 +299,13 @@ __all__ = [
     'dict_to_keypoint',
     'keypoints_to_list',
     'list_to_keypoints',
+
+    # Logging
+    'setup_logger',
+    'get_logger',
+    'configure_root_logger',
+    'disable_console_logging',
+    'set_level',
 ]
 
 # Add deep learning detectors if available
@@ -298,7 +313,6 @@ if _has_deep_learning:
     __all__.extend([
         'SuperPointDetector',
         'ALIKEDDetector',
-        'DISKDetector',
     ])
 
 # =============================================================================
@@ -327,7 +341,6 @@ def get_available_methods():
         'deep_learning': {
             'SuperPoint': _has_deep_learning,
             'ALIKED': _has_deep_learning,
-            'DISK': _has_deep_learning,
         }
     }
     return methods

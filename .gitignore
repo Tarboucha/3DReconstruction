@@ -18,6 +18,7 @@ FeatureMatchingExtraction/__pycache__/
 /test_folder_benchmark.py
 /test_output
 /results
-
-
-
+*.md
+weights/
+FeatureMatchingExtraction/matchers/__pycache__/
+FeatureMatchingExtraction/matchers/weights/
